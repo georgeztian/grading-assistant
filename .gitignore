@@ -1,0 +1,31 @@
+# Office lock/temp files created while a document is open
+~$*.docx
+~$*.xlsx
+~$*.doc
+~$*.xls
+~$*.zip
+
+# Python
+__pycache__/
+*.pyc
+
+# Secrets
+.env
+.env.*
+*.key
+*.pem
+
+# OS
+.DS_Store
+Thumbs.db
+
+# VS Code local settings
+.vscode/
+
+# Student/grading data (keep folders via .gitkeep, never commit contents)
+student-submissions/*
+!student-submissions/.gitkeep
+reference-solutions/*
+!reference-solutions/.gitkeep
+graded-submissions/*
+!graded-submissions/.gitkeep
