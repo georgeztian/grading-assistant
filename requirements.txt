@@ -1,0 +1,7 @@
+python-docx
+pypdf
+openpyxl
+lxml
+PyMuPDF
+xlrd<2.0
+olefile

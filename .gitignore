@@ -9,6 +9,9 @@
 __pycache__/
 *.pyc
 
+# Shared extraction cache (deterministic, derived from data files — never commit)
+.cache/
+
 # Secrets
 .env
 .env.*

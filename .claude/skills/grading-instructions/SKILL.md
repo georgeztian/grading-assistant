@@ -8,13 +8,19 @@ description: grading instructions to grade students' homework submissions
 Orchestrates parallel **grader agent** (red annotations for incorrect/incomplete only) + **independent checker agent** (single-pass verification, no corrections).
 
 **Key Requirements**: 
-- **Only edit files in `graded-submissions/`**
-- Python-based content extraction for ALL content (text, equations, pictures, special symbols, formatting, spreadsheet tabs/formulas)
+- **Only edit files in `graded-submissions/`** (the shared extraction cache under `.cache/` is the one exception — see below)
+- Content extraction for ALL content (text, equations, pictures, special symbols, formatting, spreadsheet tabs/formulas) via the shared extraction toolkit in `scripts/`
 - Supports .doc, .docx, .pdf, .xlsx, and .xls, for both submissions and solutions
 - Single verification pass (no correction loops)
 - **No scoring**: neither agent calculates or writes a total score/grade (e.g. "8/10", "80%", a letter grade) — only per-question verdicts and explanations; scoring is left to the human instructor
 
-**Extraction caveats**: plain `python-docx`/`pypdf`/`openpyxl` reads can silently miss or corrupt content — Word equations (OMML) read back empty from `.docx` and as corrupted Unicode from PDF; spreadsheets need every tab read (not just the active one) with both formula and cached-value passes. Full method and required libraries are in `grader.md`'s "Equation Extraction" and "Spreadsheet Extraction" sections — grader and checker must use the same method for comparable results.
+**Prerequisite (once per machine)**: `pip install -r requirements.txt` — installs `python-docx`, `pypdf`, `openpyxl`, `lxml`, `PyMuPDF`, `xlrd<2.0`, `olefile`. `.doc` conversion additionally needs `pandoc` or LibreOffice on PATH.
+
+**Shared extraction toolkit** (`scripts/`, documented in `scripts/README.md`): both agents run `python scripts/extract.py <file>` instead of writing ad hoc parsing code (caching is automatic — no flag needed). It implements the exact methods `grader.md`'s "Equation Extraction" and "Spreadsheet Extraction" sections describe (Word OMML equation walking, dual formula/cached-value spreadsheet loads reading every tab, `.doc` conversion, PDF equation-region flagging) and caches the result by file content hash under `.cache/extraction/`. Since grader and checker are already required to use the identical method for comparable results, this means:
+- A solutions file shared by N students is extracted **once**, not once per student per agent.
+- The checker's independent verdict still comes from its own judgment — it just reads the grader's cached extraction record instead of re-parsing the file from scratch (see `grading-checker.md` Step 2).
+- For spreadsheets, `python scripts/compare_xlsx.py <submission> <solutions>` adds a deterministic pre-check for purely numeric answer cells (`auto_correct`/`auto_incorrect`/`missing_answer`), so neither agent spends LLM reasoning re-deriving arithmetic that Python can verify exactly. Every other cell — text, conceptual, formula-as-answer — still requires the agent's own judgment (`needs_review`), and both agents still write every explanation themselves.
+- Fall back to the manual method in `grader.md` only for a file the script can't handle well.
 
 **Annotation convention**: documents get red feedback text immediately below the wrong answer; spreadsheets get two markers instead — the wrong cell itself highlighted in Excel's "Bad" style (light red fill/dark red font) plus a red explanation in the closest empty cell to it. Full placement rules are in `grader.md` Step 3/4.
 
