@@ -33,7 +33,11 @@ RENDER_DIR = REPO_ROOT / ".cache" / "renders"
 # (doc_image_heuristic in extract.py's .doc branch, lib/doc_images.py) as a
 # cross-check against the docx-converter's image_count and a fallback signal
 # when no converter is installed at all.
-SCHEMA_VERSION = 4
+# v5: docx/xlsx image_warning now gives a concrete, shell-safe unzip command
+# into .cache/inspect/<file stem>/ instead of an ad hoc /tmp/x path — a
+# prior run followed the vague version and left a stray folder in the
+# project root.
+SCHEMA_VERSION = 5
 
 
 def sha256_of(path: Path) -> str:

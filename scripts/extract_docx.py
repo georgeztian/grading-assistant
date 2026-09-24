@@ -150,8 +150,11 @@ def extract_docx(path: Path) -> dict:
             "image_warning": (
                 f"{image_count} embedded image(s) found — their content is NOT "
                 "in this extraction (no OCR). If a question, figure, or table "
-                "depends on an image, inspect it directly, e.g.: "
-                "`unzip -o file.docx -d /tmp/x` then view /tmp/x/word/media/*."
+                f"depends on an image, inspect it directly, e.g.: `unzip -o "
+                f"\"{path}\" -d \".cache/inspect/{path.stem}\"` then view "
+                f"\".cache/inspect/{path.stem}/word/media/\"* — use the "
+                "project's existing .cache/ scratch area, not an ad hoc path, "
+                "so nothing gets left behind in the project root."
             ) if image_count else None,
         },
         "notes": {

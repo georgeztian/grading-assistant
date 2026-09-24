@@ -28,7 +28,7 @@ Use the `/grading-instructions` skill for detailed workflow and invocation instr
 - `.claude/agents/` → `grader.md`, `grading-checker.md`
 - `.claude/skills/grading-instructions/` → Full workflow
 - `scripts/` — shared extraction toolkit (git-tracked code, not data): `extract.py` (unified entry point), `extract_docx.py`/`extract_pdf.py`/`extract_xlsx.py`/`extract_xls.py`/`convert_doc.py` (per-format extractors), `compare_xlsx.py` (deterministic numeric pre-check). See `scripts/README.md`.
-- `.cache/` — git-ignored extraction cache written by `scripts/` (`.cache/extraction/`, `.cache/renders/`, `.cache/converted/`); safe to delete, everything re-extracts on next use
+- `.cache/` — git-ignored extraction cache written by `scripts/` (`.cache/extraction/`, `.cache/renders/`, `.cache/converted/`, `.cache/inspect/` for ad hoc manual file inspection e.g. unzipping to view an embedded image); safe to delete, everything re-extracts on next use. Use it (never a made-up path in the project root or an OS temp dir) for any one-off inspection.
 - `requirements.txt` — Python dependencies for `scripts/` (`pip install -r requirements.txt` once per machine)
 
 

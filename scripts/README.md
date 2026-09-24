@@ -115,8 +115,14 @@ PATH — same as before, this is unchanged from `grader.md`'s requirement.
 `.cache/extraction/<sha256 of file>.json` — one record per distinct file
 content, schema-versioned (`lib/cache.py`) so a script change invalidates
 stale entries automatically. `.cache/renders/` holds PDF page images.
-`.cache/converted/` holds `.doc` → `.docx` conversion output. The whole
-`.cache/` directory is git-ignored and lives outside `student-submissions/`,
+`.cache/converted/` holds `.doc` → `.docx` conversion output. `.cache/inspect/`
+is the designated destination for ad hoc manual inspection — e.g. unzipping a
+`.docx`/`.xlsx` to view an embedded image at `word/media/*`/`xl/media/*` (the
+exact command is given in `image_warning` whenever one is present, using
+`.cache/inspect/<file stem>/` — always use this, never invent a path in the
+project root or an OS temp dir, so nothing gets left behind uncleaned).
+
+The whole `.cache/` directory is git-ignored and lives outside `student-submissions/`,
 `reference-solutions/`, and `graded-submissions/` — it's derived, disposable
 data, safe to delete at any time (everything just re-extracts on next use).
 

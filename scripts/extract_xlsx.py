@@ -102,8 +102,11 @@ def extract_xlsx(path: Path) -> dict:
                 f"{total_images} embedded image(s) found across sheets (see "
                 "per-sheet image_count) — their content is NOT in this "
                 "extraction (no OCR/chart-reading). If a question depends on "
-                "a chart or a figure embedded as an image, inspect it "
-                "directly rather than assuming the cell data is complete."
+                f"a chart or a figure embedded as an image, inspect it "
+                f"directly, e.g.: `unzip -o \"{path}\" -d "
+                f"\".cache/inspect/{path.stem}\"` then view "
+                f"\".cache/inspect/{path.stem}/xl/media/\"* — use the "
+                "project's existing .cache/ scratch area, not an ad hoc path."
             ) if total_images else None,
         },
     }
