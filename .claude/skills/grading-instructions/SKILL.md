@@ -22,7 +22,7 @@ Orchestrates parallel **grader agent** (red annotations for incorrect/incomplete
 - For spreadsheets, `python scripts/compare_xlsx.py <submission> <solutions>` adds a deterministic pre-check for purely numeric answer cells (`auto_correct`/`auto_incorrect`/`missing_answer`), so neither agent spends LLM reasoning re-deriving arithmetic that Python can verify exactly. Every other cell — text, conceptual, formula-as-answer — still requires the agent's own judgment (`needs_review`), and both agents still write every explanation themselves.
 - Fall back to the manual method in `grader.md` only for a file the script can't handle well.
 
-**Annotation convention**: documents get red feedback text immediately below the wrong answer; spreadsheets get two markers instead — the wrong cell itself highlighted in Excel's "Bad" style (light red fill/dark red font) plus a red explanation in the closest empty cell to it. Full placement rules are in `grader.md` Step 3/4.
+**Annotation convention**: documents get red feedback text immediately below the wrong answer; spreadsheets get two markers instead — the wrong cell itself highlighted in Excel's "Bad" style (light red fill/dark red font) plus a red explanation in the closest empty cell to it. Full placement rules are in `grader.md` Step 3/4. **Colors and mark wording are pinned exactly, never left to an individual agent run's discretion**: grader red is always hex `FF0000` (annotations and the `Grading Completed` mark), checker blue is always hex `0000FF` (`Review Passed`/`Review FAILED` and any discrepancy text), and the mark text itself is always that exact wording with no variants or decoration (no checkmarks, no reworded phrasing) — see `grader.md` Step 4 and `grading-checker.md` Step 4/5.
 
 **Conceptual/explanation questions**: for written-sentence answers, grading isn't just right/wrong — the grader must check the student's answer against every key word/point the solution relies on and name any that are missing, even if the answer otherwise sounds reasonable. Full method is in `grader.md`'s "Conceptual/Explanation/Interpretation Questions" section; grader and checker must use the same method.
 
@@ -53,8 +53,8 @@ Both agents work independently on different files:
 **Invoke** once a submission has its "Grading Completed" mark, passing `submission_file`, `graded_file` (the `_Graded.docx`/`_Graded.xlsx` in `graded-submissions/`), and `solutions_file`. Full process is defined in `grading-checker.md` — grades independently first, then compares against the grader's annotations.
 
 **Final verdict** (single pass — never sent back to the grader for correction):
-- **"Review Passed"** (blue mark): grading complete and verified ✓
-- **"Review FAILED"** (blue mark), immediately followed by blue text in the same graded file explicitly stating every problem (no separate file): user reviews manually and decides next steps
+- **`Review Passed`** (blue mark, hex `0000FF`, exact text): grading complete and verified ✓
+- **`Review FAILED`** (blue mark, hex `0000FF`, exact text), immediately followed by text in the same blue in the same graded file explicitly stating every problem (no separate file): user reviews manually and decides next steps
 
 ### Discrepancy Types & Severity
 

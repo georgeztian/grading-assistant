@@ -54,25 +54,26 @@ Verify grading quality (single pass, no corrections):
   - **Key point missed?** (for conceptual/explanation questions: did the grader miss a key word/point that you independently found absent from the student's answer, or mark an answer correct despite a missing key point, or name a "missing" point that's actually present?)
 
 ### Step 4: Mark Final Verdict (Single Pass, No Corrections)
+Color is pinned exactly: **BLUE = hex `0000FF`** (e.g. `RGBColor(0x00, 0x00, 0xFF)` in python-docx) for every mark in this step — never a different shade of blue, so every checked file looks identical.
 - **.docx**:
-  - No discrepancies: Add **BLUE** mark `Review Passed` to end of document (as its own paragraph, after the grader's red "Grading Completed" mark) → ✓ complete. The new paragraph's text is exactly `Review Passed` — **NOT** `Grading Completed | Review Passed`; don't prepend "Grading Completed" again just because the preceding red paragraph says it.
-  - Discrepancies found: Add **BLUE** mark `Review FAILED` to end of document (same placement, exact text `Review FAILED`, same **NOT** rule as above) → Proceed to Step 5 to explicitly state problems
+  - No discrepancies: Add a mark, blue (hex `0000FF`), to end of document (as its own paragraph, after the grader's red "Grading Completed" mark) → ✓ complete. The new paragraph's text is **exactly** `Review Passed` — **NOT** `Grading Completed | Review Passed`, **NOT** `Review Passed ✓` or any other variant; don't prepend "Grading Completed" again just because the preceding red paragraph says it, and don't append a checkmark or other decoration to the text itself.
+  - Discrepancies found: Add a mark, blue (hex `0000FF`), to end of document (same placement, text **exactly** `Review FAILED` — no variant, no decoration — same **NOT** rule as above) → Proceed to Step 5 to explicitly state problems
 - **.xlsx**:
-  - No discrepancies: On the **"Grading Summary"** tab, add a new row below "Grading Completed" with **BLUE** text `Review Passed` → ✓ complete
-  - Discrepancies found: On the **"Grading Summary"** tab, add a new row below "Grading Completed" with **BLUE** text `Review FAILED` → Proceed to Step 5 to explicitly state problems
+  - No discrepancies: On the **"Grading Summary"** tab, add a new row below "Grading Completed" with blue (hex `0000FF`) text, **exactly** `Review Passed` → ✓ complete
+  - Discrepancies found: On the **"Grading Summary"** tab, add a new row below "Grading Completed" with blue (hex `0000FF`) text, **exactly** `Review FAILED` → Proceed to Step 5 to explicitly state problems
 
 ### Step 5: State Every Problem (If Discrepancies Found)
 **No separate report file is created** — every discrepancy is written directly into the graded file, immediately below the "Review FAILED" mark, in blue text.
 
-- **.docx**: below the `Review FAILED` line, add one blue paragraph per discrepancy:
+- **.docx**: below the `Review FAILED` line, add one paragraph per discrepancy, blue (hex `0000FF`, same as the verdict mark):
   - `Q[question_number] — [type]: checker says [checker_verdict] ([checker_explanation]); grader says [grader_verdict] ([grader_explanation]). [notes]`
   - `type` is one of: `verdict_mismatch`, `missed_question`, `annotation_placement`, `explanation_error`, `incomplete_coverage`, `cell_highlight_missing`, `missing_keypoint_not_flagged`
-  - After the per-question lines, add one closing blue summary line, e.g. "Grader's verdicts agree with the checker on every question except Q2 (marked correct when incorrect)." — describe agreement/disagreement only, never a score or fraction.
-- **.xlsx**: on the **"Grading Summary"** tab, below the `Review FAILED` row, add one blue-text row per discrepancy with the same fields (question number, type, checker verdict/explanation, grader verdict/explanation, notes), followed by one closing blue summary row.
+  - After the per-question lines, add one closing summary line, same blue (hex `0000FF`), e.g. "Grader's verdicts agree with the checker on every question except Q2 (marked correct when incorrect)." — describe agreement/disagreement only, never a score or fraction.
+- **.xlsx**: on the **"Grading Summary"** tab, below the `Review FAILED` row, add one row per discrepancy, same blue (hex `0000FF`), with the same fields (question number, type, checker verdict/explanation, grader verdict/explanation, notes), followed by one closing summary row in the same blue.
 
 ## Output
-- **No discrepancies**: `_Graded.docx`/`_Graded.xlsx` with "Review Passed" mark (blue) added → Grading complete ✓
-- **Discrepancies found**: `_Graded.docx`/`_Graded.xlsx` with "Review FAILED" mark (blue) added, immediately followed by blue text explicitly stating every problem (no corrections, final verdict, no separate file created)
+- **No discrepancies**: `_Graded.docx`/`_Graded.xlsx` with `Review Passed` mark (blue, hex `0000FF`) added → Grading complete ✓
+- **Discrepancies found**: `_Graded.docx`/`_Graded.xlsx` with `Review FAILED` mark (blue, hex `0000FF`) added, immediately followed by text in the same blue explicitly stating every problem (no corrections, final verdict, no separate file created)
 - Discrepancy severities follow the table in `SKILL.md`
 
 ## Constraints
@@ -80,7 +81,7 @@ Verify grading quality (single pass, no corrections):
 - **Never create intermediate/temp files (e.g. `.json`, `.txt`) outside `.cache/`** — independent verdicts and comparisons stay in memory; the only file written under grading output is the same `_Graded.docx`/`_Graded.xlsx` the grader produced. The shared extraction toolkit's cache (`.cache/extraction/`, `.cache/renders/`, `.cache/converted/`) is the one intended exception — it's derived, git-ignored, disposable data, not grading output
 - Grade blindly first — form own verdicts before checking grader's work
 - **Use the shared extraction toolkit** (`scripts/extract.py`) — reusing the grader's cached extraction record is expected and required for comparability (see Step 2); independence applies to the verdict you form from that content, not to re-parsing the file
-- **Use BLUE INK TEXT** for final marks (not red) — end of document for .docx, "Grading Summary" tab for .xlsx
+- **Use BLUE INK TEXT, exact hex `0000FF`** for final marks (not red, and never a different shade of blue) — end of document for .docx, "Grading Summary" tab for .xlsx. Mark wording is pinned exactly too: `Review Passed` / `Review FAILED`, no variants or decoration (no checkmark, no extra words)
 - Single verification pass (no corrections sent back)
 - If verification FAILS: explicitly list all problems in blue text immediately below the "Review FAILED" mark in the graded file — never create a separate report file
 - If unreadable content: mark "unreadable" and compare against grader's handling

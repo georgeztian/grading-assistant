@@ -80,7 +80,7 @@ The extraction script detects *that* an image exists (see the bullet above) but 
     - e.g., "**INCORRECT**: The correct answer is [X] because [explanation]. Your answer [Y] is wrong because [why]."
     - For incomplete: "**INCOMPLETE**: [Missing work/answer]. [Guidance for solving]"
     - For conceptual/explanation answers missing key points: "**INCOMPLETE**: Missing key point(s): [name each specific missing key word/concept]. [Why it matters / what a complete answer would add]" — always name the specific missing points, never a generic "explanation is incomplete"
-  - Ensure all text annotations are in **RED color** to differentiate from original content
+  - Ensure all text annotations are in **RED color, exact hex `FF0000`** (e.g. `RGBColor(0xFF, 0x00, 0x00)` in python-docx) to differentiate from original content — always this exact hex, never a different red (e.g. Word's "Dark Red" `C00000`), so color is consistent across every graded file
 
 **If submission is .xlsx/.xls** — output format is `.xlsx` (always output as .xlsx, even if input was .xls, since .xls cannot reliably round-trip rich formatting):
 - Duplicate the student submission as `[original_name]_Graded.xlsx` in `output_dir`, preserving all original tabs, formulas, and formatting (load with `openpyxl`, `data_only=False`, edit in place, save — do not flatten to values)
@@ -95,26 +95,27 @@ The extraction script detects *that* an image exists (see the bullet above) but 
 - Grade **ALL questions without exception** — no questions should be skipped (across all sheets/tabs for spreadsheets)
 
 ### Step 4: Mark Complete
-- **.docx output**: Add **"Grading Completed"** (red ink text) at end of document after all questions graded and annotations placed
-- **.xlsx output**: Add a new worksheet tab named **"Grading Summary"** (created last, after all graded sheets) containing **"Grading Completed"** in red bold text in cell A1
+- **.docx output**: Add a paragraph with the **exact text** `Grading Completed` (red ink text, hex **`FF0000`**, bold) at end of document after all questions graded and annotations placed — this exact wording and color, so every graded file's mark is identical
+- **.xlsx output**: Add a new worksheet tab named **"Grading Summary"** (created last, after all graded sheets) containing the **exact text** `Grading Completed` in cell A1, red bold text, hex **`FF0000`** — same exact wording and color as the .docx mark
 
 ## Output
 - **.docx**: `[output_dir]/[original_name]_Graded.docx` (e.g. `graded-submissions/HW1/pdf_file_Graded.docx`; the original extension is dropped) — annotated copy with:
-  - Red annotations (only for incorrect/incomplete answers)
-  - "Grading Completed" mark in red at end of document
+  - Red (hex `FF0000`) annotations (only for incorrect/incomplete answers)
+  - `Grading Completed` mark, exact text, red (hex `FF0000`), at end of document
   - All verdicts captured in annotations (no separate JSON file)
 - **.xlsx**: `[output_dir]/[original_name]_Graded.xlsx` — annotated copy with:
-  - Each incorrect/incomplete answer cell highlighted with a light red background + dark red font (Excel's "Bad" style)
-  - Red-font annotations in the closest empty cell to each incorrect/incomplete answer, on their original sheet/tab
-  - "Grading Completed" mark in red on a dedicated "Grading Summary" tab
+  - Each incorrect/incomplete answer cell highlighted with a light red background + dark red font (Excel's "Bad" style, `FFC7CE`/`9C0006`)
+  - Red-font (hex `FF0000`) annotations in the closest empty cell to each incorrect/incomplete answer, on their original sheet/tab
+  - `Grading Completed` mark, exact text, red (hex `FF0000`), on a dedicated "Grading Summary" tab
   - All verdicts captured in annotations (no separate JSON file)
 
 ## Constraints
 - **ONLY write grading output to `graded-submissions/`** (including its per-homework subfolders) — the shared extraction toolkit's cache under `.cache/` is the one exception, since it's derived, git-ignored, disposable data, not grading output
 - **Use the shared extraction toolkit** (`scripts/extract.py`, falling back to manual Python per `scripts/README.md` only when the script can't handle a file) — all content must be properly extracted for accuracy, across every sheet/tab for spreadsheets
 - Only annotate **incorrect/incomplete** answers (correct answers need NO feedback)
-- **.docx**: all annotations in **red text**, **immediately below each answer** (not at end)
-- **.xlsx**: highlight each incorrect/incomplete **answer cell itself** with a light red fill + dark red font (Excel "Bad" style, `FFC7CE`/`9C0006`) without altering its value/formula, AND put the explanation annotation in **red text** in the **closest empty cell** to it (right, then below, then search outward) — never overwrite a non-empty cell with the explanation text
+- **.docx**: all annotations in **red text (hex `FF0000`)**, **immediately below each answer** (not at end)
+- **.xlsx**: highlight each incorrect/incomplete **answer cell itself** with a light red fill + dark red font (Excel "Bad" style, `FFC7CE`/`9C0006`) without altering its value/formula, AND put the explanation annotation in **red text (hex `FF0000`)** in the **closest empty cell** to it (right, then below, then search outward) — never overwrite a non-empty cell with the explanation text
+- **Colors and mark wording are pinned exactly** (`FF0000` for all grader red, `Grading Completed` exact text) — never substitute a different shade of red or reword the mark, so every graded file across every agent run looks identical
 - **Grade ALL questions** — no questions should be skipped
 - **Conceptual/explanation answers**: check against every key word/point the solution relies on, not just overall direction — mark **INCOMPLETE** and name every specific missing point if any are absent, even when the answer otherwise sounds reasonable
 - Grading is final — no corrections sent back
