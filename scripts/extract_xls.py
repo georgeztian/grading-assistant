@@ -8,8 +8,8 @@ flagged `formula_available: false` rather than silently treating a computed
 answer as a plain literal.
 
 Usage:
-    python extract_xls.py <file.xls>
-    python extract_xls.py <file.xls> --cache
+    .venv/Scripts/python scripts/extract_xls.py <file.xls>
+    .venv/Scripts/python scripts/extract_xls.py <file.xls> --cache
 """
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+import _venv  # noqa: F401  — must precede third-party imports (re-runs under .venv)
 
 import xlrd
 
@@ -32,6 +34,7 @@ def extract_xls(path: Path) -> dict:
 
     sheets = {}
     hidden_sheet_count = 0
+    cells_with_comment = 0
 
     for sheet in book.sheets():
         visibility = VISIBILITY.get(getattr(sheet, "visibility", 0), "visible")
@@ -44,6 +47,12 @@ def extract_xls(path: Path) -> dict:
         hidden_cols = [
             c for c, info in getattr(sheet, "colinfo_map", {}).items() if info.hidden
         ]
+
+        # Cell comments ("notes"); xlrd only parses them with formatting_info=True.
+        notes = {
+            rc: (getattr(note, "text", "") or "")
+            for rc, note in getattr(sheet, "cell_note_map", {}).items()
+        }
 
         cells = {}
         for r in range(sheet.nrows):
@@ -59,6 +68,12 @@ def extract_xls(path: Path) -> dict:
                         pass
                 coord = f"{xlrd.colname(c)}{r + 1}"
                 cells[coord] = {"value": value, "formula_available": False}
+
+        # Attach comments — including ones on otherwise-empty cells.
+        for (r, c), text in notes.items():
+            coord = f"{xlrd.colname(c)}{r + 1}"
+            cells.setdefault(coord, {"formula_available": False})["comment"] = text
+        cells_with_comment += len(notes)
 
         sheets[sheet.name] = {
             "hidden": visibility != "visible",
@@ -85,8 +100,9 @@ def extract_xls(path: Path) -> dict:
             "extract or render any of it). Their content is NOT in this "
             "extraction. If a question depends on a figure/chart/pasted "
             "image, inspect it directly — e.g. convert the file to .xlsx "
-            "with LibreOffice (`soffice --headless --convert-to xlsx`) and "
-            "re-run extract_xlsx.py, which can read and count images."
+            "with LibreOffice (`soffice --headless --convert-to xlsx "
+            "--outdir .cache/converted <file.xls>`) and re-run "
+            "extract_xlsx.py on the result, which can read and count images."
         )
     elif not drawings.get("supported"):
         warnings.append(
@@ -103,7 +119,7 @@ def extract_xls(path: Path) -> dict:
             "sheet_count": book.nsheets,
             "hidden_sheet_count": hidden_sheet_count,
             "cells_with_formula": 0,
-            "cells_with_comment": 0,
+            "cells_with_comment": cells_with_comment,
             "likely_has_images": likely_has_images,
         },
     }

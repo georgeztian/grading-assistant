@@ -4,7 +4,8 @@ Grade students' homework submissions using concurrent **grader agent** (red anno
 # Workflow Rules
 - **Concurrency cap**: at most 10 concurrent agents per type (10 graders and 10 checkers may run together); queue the rest and launch more as earlier ones finish (see `SKILL.md`)
 - **Only edit files in `graded-submissions/`** (the shared extraction cache in `.cache/` is the one exception — derived, git-ignored, not grading output)
-- **Content extraction**: both agents run the shared toolkit in `scripts/` (`python scripts/extract.py <file>`) rather than writing ad hoc parsing code — it's cached by file hash automatically, so a solutions file or submission is only ever extracted once, even when reused across students or reread by the checker. See `scripts/README.md`.
+- **Content extraction**: both agents run the shared toolkit in `scripts/` (`.venv/Scripts/python scripts/extract.py <file>`) rather than writing ad hoc parsing code — it's cached by file hash automatically, so a solutions file or submission is only ever extracted once, even when reused across students or reread by the checker. See `scripts/README.md`.
+- **Python environment**: always run Python via the project's private venv — `.venv/Scripts/python` (Windows; `.venv/bin/python` on macOS/Linux), never bare `python`/`pip` — for the `scripts/` toolkit *and* any ad hoc code (e.g. writing annotations with python-docx/openpyxl). If `.venv/` is missing, run `python scripts/setup_env.py` once first (the only time a system `python` is used). Toolkit scripts relaunch themselves into `.venv` if started with the wrong interpreter, but ad hoc code does not.
 - **Submissions**: Accepts .doc, .docx, .pdf, .xlsx, and .xls files
 - **Annotations**: Only annotate incorrect/incomplete answers (correct answers need no feedback). Placement convention (documents vs. spreadsheets), content extraction requirements (equations, spreadsheet tabs), and conceptual-question key-point checking are detailed in `grader.md` and summarized in `SKILL.md` — both grader and checker must follow the same methods
 - **No scoring**: Agents never calculate or write a total score/grade (e.g. "8/10", "80%", a letter grade) — only per-question correct/incorrect/partial verdicts and explanations. Scoring is left entirely to the human instructor.
@@ -27,8 +28,9 @@ Use the `/grading-instructions` skill for detailed workflow and invocation instr
 - **Per-homework subfolders (optional)**: `reference-solutions/` and `student-submissions/` may each be flat or organized into subfolders (e.g. `HW1/`, `HW2/`), not always the same way on both sides. Agents must match a submission's subfolder to a solutions subfolder by exact name before grading (see `SKILL.md` Step 0), and output mirrors the input structure (e.g. `graded-submissions/HW1/`).
 - `.claude/agents/` → `grader.md`, `grading-checker.md`
 - `.claude/skills/grading-instructions/` → Full workflow
-- `scripts/` — shared extraction toolkit (git-tracked code, not data): `extract.py` (unified entry point), `extract_docx.py`/`extract_pdf.py`/`extract_xlsx.py`/`extract_xls.py`/`convert_doc.py` (per-format extractors), `compare_xlsx.py` (deterministic numeric pre-check). See `scripts/README.md`.
+- `scripts/` — shared extraction toolkit (git-tracked code, not data): `extract.py` (unified entry point), `extract_docx.py`/`extract_pdf.py`/`extract_xlsx.py`/`extract_xls.py`/`convert_doc.py` (per-format extractors), `compare_xlsx.py` (deterministic numeric pre-check), `setup_env.py` (creates `.venv/`), `_venv.py` (interpreter guard every script imports). See `scripts/README.md`.
 - `.cache/` — git-ignored extraction cache written by `scripts/` (`.cache/extraction/`, `.cache/renders/`, `.cache/converted/`, `.cache/inspect/` for ad hoc manual file inspection e.g. unzipping to view an embedded image); safe to delete, everything re-extracts on next use. Use it (never a made-up path in the project root or an OS temp dir) for any one-off inspection.
-- `requirements.txt` — Python dependencies for `scripts/` (`pip install -r requirements.txt` once per machine)
+- `requirements.txt` — Python dependencies for `scripts/`, installed into `.venv/` by `scripts/setup_env.py`
+- `.venv/` — private per-machine Python environment (git-ignored, excluded from Dropbox sync); create/refresh with `python scripts/setup_env.py`
 
 

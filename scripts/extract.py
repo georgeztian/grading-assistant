@@ -10,9 +10,9 @@ comparable results, a file is only ever parsed once — whoever asks second
 student's grading) gets the cached record instead of re-parsing.
 
 Usage:
-    python extract.py <file>              # cache + print {cache_path, summary}
-    python extract.py <file> --json       # also print the full record
-    python extract.py <file> --force      # ignore existing cache entry
+    .venv/Scripts/python scripts/extract.py <file>          # cache + print {cache_path, summary}
+    .venv/Scripts/python scripts/extract.py <file> --json   # also print the full record
+    .venv/Scripts/python scripts/extract.py <file> --force  # ignore existing cache entry
 
 Caching is always on for this script — there is no opt-in `--cache` flag to
 pass (that flag exists on the per-format extract_*.py scripts, which default
@@ -30,6 +30,8 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+import _venv  # noqa: F401  — must precede third-party imports (re-runs under .venv)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib import cache  # noqa: E402
@@ -49,7 +51,7 @@ def extract_any(path: Path) -> dict:
     if ext == ".doc":
         converted = convert_doc.convert_doc_to_docx(
             path, cache.CACHE_DIR.parent / "converted"
-        )
+        )  # -> .cache/converted/<sha256>/<stem>.docx
         record = extract_docx.extract_docx(converted)
         record["converted_from"] = str(path)
         record["converter_output_path"] = str(converted)
@@ -129,8 +131,13 @@ def main():
 
     try:
         record = extract_any(path)
-    except (RuntimeError, ValueError) as exc:
-        out = {"error": str(exc)}
+    except Exception as exc:  # failed conversion, corrupt/unreadable file, ...
+        # Always a JSON error, never a bare traceback, so the agent can flag
+        # the file "unreadable" per grader.md.
+        if isinstance(exc, (RuntimeError, ValueError)):
+            out = {"error": str(exc)}
+        else:
+            out = {"error": f"unreadable: {type(exc).__name__}: {exc}"}
         if ext == ".doc":
             # Conversion failed (e.g. no_converter) — text extraction can't
             # proceed, but the image heuristic only needs the raw OLE file,

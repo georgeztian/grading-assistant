@@ -27,14 +27,31 @@ content gets from a file into the agent's hands.
 ## Setup
 
 ```
-pip install -r requirements.txt
+python scripts/setup_env.py
 ```
 
-`.doc` conversion additionally needs `pandoc` or LibreOffice (`soffice`) on
-PATH — same as before, this is unchanged from `grader.md`'s requirement.
+Creates the project's private environment at `.venv/` (stdlib only, so any
+Python 3.9+ can run it; idempotent — re-run after `requirements.txt` changes)
+and installs `requirements.txt` into it. `.venv/` is git-ignored and marked
+ignored for Dropbox sync. From then on, run everything with the venv
+interpreter — `.venv/Scripts/python` on Windows, `.venv/bin/python` on
+macOS/Linux — including any ad hoc Python. As a safety net, every toolkit
+script imports `_venv.py` first: started under any other interpreter it
+re-runs itself under `.venv`'s, and if `.venv/` is missing it exits with the
+setup command instead of silently using global packages.
+
+`requirements.txt` includes Pillow even though no script imports it: without
+it openpyxl silently skips embedded images — `image_count` reads 0, and a
+`_Graded.xlsx` saved by an agent loses the student's pictures.
+
+`.doc` conversion additionally needs LibreOffice (`soffice`), found on PATH or
+in its standard install location. `pandoc` is not an option here — it reads
+`.docx` but not the legacy binary `.doc` format.
 
 ## Scripts
 
+- **`setup_env.py`** — creates/refreshes `.venv/` (see Setup above).
+- **`_venv.py`** — interpreter guard imported by every script below (not run directly).
 - **`extract.py <file> [--force] [--json]`** — the one entry point agents
   should call. Dispatches by extension (`.doc`/`.docx`/`.pdf`/`.xlsx`/`.xls`),
   converts `.doc` first, and always goes through the shared cache — caching
@@ -69,11 +86,12 @@ PATH — same as before, this is unchanged from `grader.md`'s requirement.
   `data_only=False` and `data_only=True` so each cell carries both its
   formula and cached value; also captures hidden rows/columns, merged
   ranges, cell comments, and per-sheet/total `image_count` (via
-  `worksheet._images`) with the same "inspect it, it's not in the text"
+  `worksheet._images`, which needs Pillow) and `chart_count` (via
+  `worksheet._charts`) with the same "inspect it, it's not in the text"
   warning as docx.
-- **`extract_xls.py`** — same shape of output for legacy `.xls` via `xlrd`,
-  flagging `formula_available: false` since `xlrd` only exposes cached
-  values. `xlrd` has no image API at all, so image detection here is a
+- **`extract_xls.py`** — same shape of output for legacy `.xls` via `xlrd`
+  (including cell comments), flagging `formula_available: false` since
+  `xlrd` only exposes cached values. `xlrd` has no image API at all, so image detection here is a
   heuristic byte-scan of the raw OLE "Workbook" stream for BIFF drawing/
   object records (`lib/xls_drawings.py`), reported as `summary.
   likely_has_images` — a presence signal (not an exact count, and OBJ
@@ -89,8 +107,10 @@ PATH — same as before, this is unchanged from `grader.md`'s requirement.
   page can hold a real embedded image (pasted work, a scanned figure) with
   otherwise perfectly clean surrounding text; any page with an image is
   flagged and rendered too.
-- **`convert_doc.py`** — `.doc` → `.docx` via `pandoc` or LibreOffice; raises
-  a clear `no_converter` error (instead of guessing) when neither is
+- **`convert_doc.py`** — `.doc` → `.docx` via headless LibreOffice, written to
+  `.cache/converted/<sha256>/<stem>.docx` so same-named files from different
+  students/homework folders never overwrite each other; raises a clear
+  `no_converter` error (instead of guessing) when LibreOffice isn't
   installed, matching `grader.md`'s "flag the file" instruction.
 - **`compare_xlsx.py <submission> <solutions>`** — deterministic pre-check
   for spreadsheet cells where the solution's answer is a bare number:
@@ -99,8 +119,9 @@ PATH — same as before, this is unchanged from `grader.md`'s requirement.
   combination (each file's own extension picks its extractor); `.xls` cells
   never carry a formula, so they simply never get a `likely_downstream_of`
   hint, which is correct rather than a gap. Every other cell (text,
-  conceptual, formula-as-the-answer, or a tab missing on one side) comes
-  back `needs_review` — the grader/checker must still judge those, and must
+  conceptual, formula-as-the-answer) comes back `needs_review`, and every
+  cell of a solution tab with no same-named submission tab comes back
+  `sheet_missing_in_submission` — the grader/checker must still judge those, and must
   still write the actual explanation for anything flagged incorrect. An
   `auto_incorrect` cell whose formula references another `auto_incorrect`
   cell on the same sheet also gets `likely_downstream_of: [...]` — a hint
@@ -115,7 +136,7 @@ PATH — same as before, this is unchanged from `grader.md`'s requirement.
 `.cache/extraction/<sha256 of file>.json` — one record per distinct file
 content, schema-versioned (`lib/cache.py`) so a script change invalidates
 stale entries automatically. `.cache/renders/` holds PDF page images.
-`.cache/converted/` holds `.doc` → `.docx` conversion output. `.cache/inspect/`
+`.cache/converted/<sha256>/` holds `.doc` → `.docx` conversion output. `.cache/inspect/`
 is the designated destination for ad hoc manual inspection — e.g. unzipping a
 `.docx`/`.xlsx` to view an embedded image at `word/media/*`/`xl/media/*` (the
 exact command is given in `image_warning` whenever one is present, using

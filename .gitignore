@@ -32,3 +32,6 @@ reference-solutions/*
 !reference-solutions/.gitkeep
 graded-submissions/*
 !graded-submissions/.gitkeep
+
+# Private Python environment (per machine — create with scripts/setup_env.py)
+.venv/

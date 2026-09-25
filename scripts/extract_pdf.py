@@ -18,8 +18,8 @@ check does NOT depend on the text looking suspicious; any page with an
 embedded image is flagged and rendered too.
 
 Usage:
-    python extract_pdf.py <file.pdf>
-    python extract_pdf.py <file.pdf> --cache
+    .venv/Scripts/python scripts/extract_pdf.py <file.pdf>
+    .venv/Scripts/python scripts/extract_pdf.py <file.pdf> --cache
 """
 from __future__ import annotations
 
@@ -28,6 +28,8 @@ import json
 import re
 import sys
 from pathlib import Path
+
+import _venv  # noqa: F401  — must precede third-party imports (re-runs under .venv)
 
 import pymupdf
 from pypdf import PdfReader

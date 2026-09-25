@@ -29,11 +29,12 @@ scripts/                  # Shared extraction toolkit (see scripts/README.md) �
 .cache/                   # Extraction cache written by scripts/ — git-ignored, safe to delete
 .claude/agents/           # grader.md, grading-checker.md — the two agents' full logic
 .claude/skills/grading-instructions/  # SKILL.md — orchestration workflow
-requirements.txt          # Python dependencies for scripts/
+requirements.txt          # Python dependencies for scripts/ (installed into .venv/)
+.venv/                    # Private Python environment — per machine, git-ignored, not synced by Dropbox
 CLAUDE.md                 # Quick-reference project rules
 ```
 
-The three data folders (`reference-solutions/`, `student-submissions/`, `graded-submissions/`) are git-ignored — their contents stay on your machine and are never committed or pushed, since they hold student work. Only a `.gitkeep` in each is tracked so the folders exist after cloning. `.cache/` is also git-ignored (it holds only derived extraction data, safe to delete at any time).
+The three data folders (`reference-solutions/`, `student-submissions/`, `graded-submissions/`) are git-ignored — their contents stay on your machine and are never committed or pushed, since they hold student work. Only a `.gitkeep` in each is tracked so the folders exist after cloning. `.cache/` and `.venv/` are also git-ignored (derived extraction data and the per-machine Python environment, respectively — both safe to delete and rebuild).
 
 ### Optional per-homework subfolders
 
@@ -73,8 +74,8 @@ If nothing is annotated and the mark is "Review Passed," every question was answ
 
 ### Prerequisites
 - Claude Code with access to this repository.
-- Python 3 with the extraction toolkit's dependencies installed: `pip install -r requirements.txt` (`python-docx`, `pypdf`, `openpyxl`, `lxml`, `PyMuPDF`, `xlrd<2.0`, `olefile`).
-- A `.doc`-to-`.docx` converter for legacy Word files: `LibreOffice` (headless) or `pandoc` — either is picked up automatically by `scripts/convert_doc.py`.
+- Python 3.9+ and a one-time environment setup: `python scripts/setup_env.py`. This creates a private virtual environment in `.venv/` and installs the toolkit's dependencies into it (`python-docx`, `pypdf`, `openpyxl`, `Pillow` (openpyxl needs it to see — and, when saving `_Graded.xlsx`, keep — embedded images), `lxml`, `PyMuPDF`, `xlrd<2.0`, `olefile`) — nothing is installed into your system Python. `.venv/` is git-ignored and excluded from Dropbox sync, so each machine builds its own; re-run the command after `requirements.txt` changes. All grading runs then use `.venv/Scripts/python` (Windows) / `.venv/bin/python` (macOS/Linux) automatically.
+- LibreOffice, for legacy `.doc` files only — `scripts/convert_doc.py` uses it headless to convert `.doc` to `.docx` and finds it on PATH or in its standard install location. (`pandoc` can't read `.doc`.) Without it, `.doc` submissions are flagged unreadable rather than guessed at.
 
 ### 1. Add your files
 - Put the answer key in `reference-solutions/`.

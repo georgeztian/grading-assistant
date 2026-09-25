@@ -37,7 +37,10 @@ RENDER_DIR = REPO_ROOT / ".cache" / "renders"
 # into .cache/inspect/<file stem>/ instead of an ad hoc /tmp/x path — a
 # prior run followed the vague version and left a stray folder in the
 # project root.
-SCHEMA_VERSION = 5
+# v6: .doc conversion output moved to .cache/converted/<sha256>/ (same-named
+# files no longer collide); xlsx gains chart_count; xls now reports cell
+# comments instead of a hardcoded cells_with_comment: 0.
+SCHEMA_VERSION = 6
 
 
 def sha256_of(path: Path) -> str:

@@ -8,10 +8,9 @@ directly and inlines any `<m:oMath>` as a linearized "[EQ: ...]" expression
 in the correct position relative to the surrounding text.
 
 Usage:
-    python extract_docx.py <file.docx>            # print JSON to stdout
-    python extract_docx.py <file.docx> --cache     # write to the shared
-                                                    # extraction cache and
-                                                    # print only the path
+    .venv/Scripts/python scripts/extract_docx.py <file.docx>          # print JSON to stdout
+    .venv/Scripts/python scripts/extract_docx.py <file.docx> --cache  # write to the shared
+        # extraction cache and print only the path + summary
 """
 from __future__ import annotations
 
@@ -19,6 +18,8 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+import _venv  # noqa: F401  — must precede third-party imports (re-runs under .venv)
 
 import docx
 from docx.table import Table

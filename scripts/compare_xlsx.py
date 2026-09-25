@@ -11,7 +11,9 @@ inconsistency between the two independent LLM reads).
 This is a HINT, not a verdict: it only ever covers cells where the solution
 value is a bare number. Anything else (text, conceptual answers, formulas
 the solution treats as the real answer, cells missing from the solution) is
-returned with status "needs_review" — the grader/checker must judge those
+returned with status "needs_review", and every cell of a solution tab that
+has no same-named tab in the submission comes back
+"sheet_missing_in_submission" — the grader/checker must judge those
 themselves, exactly as before. Never skip a cell silently.
 
 Works for both .xlsx and legacy .xls (each file's own extension picks the
@@ -21,8 +23,8 @@ an .xlsx solutions file or vice versa) — .xls cells never carry a `formula`
 won't appear for them, which is correct rather than a bug.
 
 Usage:
-    python compare_xlsx.py <submission.xlsx> <solutions.xlsx> [--tolerance 1e-4]
-    python compare_xlsx.py <submission.xls> <solutions.xlsx> [--tolerance 1e-4]
+    .venv/Scripts/python scripts/compare_xlsx.py <submission.xlsx> <solutions.xlsx> [--tolerance 1e-4]
+    .venv/Scripts/python scripts/compare_xlsx.py <submission.xls> <solutions.xlsx> [--tolerance 1e-4]
 """
 from __future__ import annotations
 
@@ -31,6 +33,8 @@ import json
 import re
 import sys
 from pathlib import Path
+
+import _venv  # noqa: F401  — must precede third-party imports (re-runs under .venv)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib import cache  # noqa: E402

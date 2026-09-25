@@ -8,8 +8,8 @@ values) since neither load alone gives both, and every sheet is walked
 (including hidden ones) rather than assuming a single active tab.
 
 Usage:
-    python extract_xlsx.py <file.xlsx>
-    python extract_xlsx.py <file.xlsx> --cache
+    .venv/Scripts/python scripts/extract_xlsx.py <file.xlsx>
+    .venv/Scripts/python scripts/extract_xlsx.py <file.xlsx> --cache
 """
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+import _venv  # noqa: F401  — must precede third-party imports (re-runs under .venv)
 
 import openpyxl
 
@@ -43,7 +45,8 @@ def extract_xlsx(path: Path) -> dict:
         hidden_rows = [r for r, dim in ws_f.row_dimensions.items() if dim.hidden]
         hidden_cols = [c for c, dim in ws_f.column_dimensions.items() if dim.hidden]
         merged_ranges = [str(r) for r in ws_f.merged_cells.ranges]
-        image_count = len(getattr(ws_f, "_images", []))
+        image_count = len(getattr(ws_f, "_images", []))  # only populated if Pillow is installed
+        chart_count = len(getattr(ws_f, "_charts", []))
 
         cells: dict[str, dict] = {}
         max_row = max(ws_f.max_row, ws_v.max_row)
@@ -83,10 +86,12 @@ def extract_xlsx(path: Path) -> dict:
             "hidden_columns": hidden_cols,
             "merged_ranges": merged_ranges,
             "image_count": image_count,
+            "chart_count": chart_count,
             "cells": cells,
         }
 
     total_images = sum(s["image_count"] for s in sheets.values())
+    total_charts = sum(s["chart_count"] for s in sheets.values())
 
     return {
         "type": "xlsx",
@@ -98,16 +103,19 @@ def extract_xlsx(path: Path) -> dict:
             "cells_with_formula": cells_with_formula,
             "cells_with_comment": cells_with_comment,
             "image_count": total_images,
+            "chart_count": total_charts,
             "image_warning": (
-                f"{total_images} embedded image(s) found across sheets (see "
-                "per-sheet image_count) — their content is NOT in this "
-                "extraction (no OCR/chart-reading). If a question depends on "
-                f"a chart or a figure embedded as an image, inspect it "
+                f"{total_images} embedded image(s) and {total_charts} chart(s) "
+                "found across sheets (see per-sheet image_count/chart_count) — "
+                "their content is NOT in this extraction (no OCR/chart-reading; "
+                "a chart's source data is in cells, but its rendering, titles "
+                "and labels are not). If a question depends on one, inspect it "
                 f"directly, e.g.: `unzip -o \"{path}\" -d "
                 f"\".cache/inspect/{path.stem}\"` then view "
-                f"\".cache/inspect/{path.stem}/xl/media/\"* — use the "
+                f"\".cache/inspect/{path.stem}/xl/media/\"* (images) or "
+                f"\".cache/inspect/{path.stem}/xl/charts/\"* (charts) — use the "
                 "project's existing .cache/ scratch area, not an ad hoc path."
-            ) if total_images else None,
+            ) if (total_images or total_charts) else None,
         },
     }
 
