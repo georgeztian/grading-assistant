@@ -1,28 +1,25 @@
 #!/usr/bin/env python3
-"""Unified extraction entry point — the one command grader/checker agents
-should run instead of writing ad hoc parsing code per submission.
+"""Unified extraction entry point — the one command every agent runs to read
+a submission or solutions file, instead of writing ad hoc parsing code.
 
-Dispatches by file extension to the right extractor (.doc is converted to
-.docx first), and always goes through the shared cache: since grader.md
-requires grader and checker to use the *exact same* extraction method for
-comparable results, a file is only ever parsed once — whoever asks second
-(same submission re-checked, or the same solutions file used by another
-student's grading) gets the cached record instead of re-parsing.
+Dispatches by file extension (.doc/.xls are converted to .docx/.xlsx first;
+a .pdf is also rebuilt as the base .docx its graded copy is written from),
+exports embedded images, and always goes through the shared cache keyed by
+content hash: a file is parsed once, and whoever asks next (the checker
+re-reading a submission, the next student's grader reading the same
+solutions file) gets the cached record.
 
 Usage:
-    .venv/Scripts/python scripts/extract.py <file>          # cache + print {cache_path, summary}
+    .venv/Scripts/python scripts/extract.py <file>          # print {view_path, cache_path, work_dir, summary}
     .venv/Scripts/python scripts/extract.py <file> --json   # also print the full record
-    .venv/Scripts/python scripts/extract.py <file> --force  # ignore existing cache entry
+    .venv/Scripts/python scripts/extract.py <file> --force  # ignore the cached record
 
-Caching is always on for this script — there is no opt-in `--cache` flag to
-pass (that flag exists on the per-format extract_*.py scripts, which default
-to a plain one-off dump when run standalone). `--cache` is still accepted
-here as a harmless no-op, purely so old muscle memory / docs referring to
-`extract.py <file> --cache` keep working rather than erroring.
-
-Then read the JSON at cache_path (e.g. with the Read tool) instead of
-re-extracting — that keeps the extraction record out of this command's own
-output for files where it would be large.
+Read the compact text view at view_path (e.g. with the Read tool): one line
+per paragraph / table row / cell, with the ids used as annotation anchors —
+the same content as the JSON record at cache_path in far fewer tokens.
+work_dir is this file's scratch folder (.cache/work/<sha12>-<path8>/, keyed by
+content and path) for the agent-written JSON the other scripts take
+(verdicts, blind verdicts, discrepancies) and the audit report.
 """
 from __future__ import annotations
 
@@ -41,18 +38,22 @@ import extract_docx  # noqa: E402
 import extract_pdf  # noqa: E402
 import extract_xls  # noqa: E402
 import extract_xlsx  # noqa: E402
+from lib import views  # noqa: E402
+from lib.pdf_docx import build_base_docx  # noqa: E402
 
 SUPPORTED = {".doc", ".docx", ".pdf", ".xlsx", ".xls"}
 
 
 def extract_any(path: Path) -> dict:
     ext = path.suffix.lower()
+    file_hash = cache.sha256_of(path)
+    # Page renders and exported images go here and are listed in the view.
+    image_dir = cache.RENDER_DIR / file_hash
 
     if ext == ".doc":
-        converted = convert_doc.convert_doc_to_docx(
-            path, cache.CACHE_DIR.parent / "converted"
-        )  # -> .cache/converted/<sha256>/<stem>.docx
-        record = extract_docx.extract_docx(converted)
+        converted = convert_doc.convert(path, cache.CONVERTED_DIR, "docx")
+        # -> .cache/converted/<sha256>/<stem>.docx (Word via COM, or LibreOffice)
+        record = extract_docx.extract_docx(converted, image_dir)
         record["converted_from"] = str(path)
         record["converter_output_path"] = str(converted)
 
@@ -73,19 +74,88 @@ def extract_any(path: Path) -> dict:
         return record
 
     if ext == ".docx":
-        return extract_docx.extract_docx(path)
+        return extract_docx.extract_docx(path, image_dir)
 
     if ext == ".xlsx":
-        return extract_xlsx.extract_xlsx(path)
+        return extract_xlsx.extract_xlsx(path, image_dir)
 
     if ext == ".xls":
-        return extract_xls.extract_xls(path)
+        # Convert to .xlsx (Excel via COM, or LibreOffice) so formulas,
+        # formatting and images are available — xlrd alone sees cached
+        # values only. The graded copy is written from the same converted
+        # workbook, so cell references line up exactly.
+        try:
+            converted = convert_doc.convert(path, cache.CONVERTED_DIR, "xlsx")
+        except RuntimeError as exc:
+            if not str(exc).startswith("no_converter"):
+                raise
+            record = extract_xls.extract_xls(path)
+            record["degraded"] = True  # re-extracted once a converter exists
+            record["warnings"].insert(0, (
+                "DEGRADED: no .xls converter (Microsoft Excel or LibreOffice) is installed, so "
+                "this is the values-only xlrd reading — formulas are unavailable and the graded "
+                "copy can only be rebuilt from values. Install Excel or LibreOffice for full fidelity."))
+            return record
+        record = extract_xlsx.extract_xlsx(converted, image_dir)
+        record["converted_from"] = str(path)
+        record["converter_output_path"] = str(converted)
+        return record
 
     if ext == ".pdf":
-        file_hash = cache.sha256_of(path)
-        return extract_pdf.extract_pdf(path, cache.RENDER_DIR, file_hash)
+        record = extract_pdf.extract_pdf(path, image_dir)
+        # The graded copy of a PDF is a .docx; build its base once, in code,
+        # and expose that document's paragraphs as the annotation anchors.
+        base = cache.CONVERTED_DIR / file_hash / "base.docx"  # shared by identical PDFs
+        page_of_paragraph = build_base_docx(path, base)
+        blocks = extract_docx.extract_docx(base, image_dir)["blocks"]
+        for block in blocks:  # the rebuilt document holds only paragraphs
+            block["page"] = page_of_paragraph[int(block["id"][1:])]
+        record["base_docx_path"] = str(base)
+        record["annotation_blocks"] = blocks
+        record["summary"]["base_docx_paragraphs"] = len(page_of_paragraph)
+        return record
 
     raise ValueError(f"unsupported file type: {ext}")
+
+
+def view_path_for(cache_file: Path, path: Path) -> Path:
+    """One view per file path (the record itself is shared by content), so
+    each student's view is headed with — and refers to — their own file."""
+    return cache_file.with_name(f"{cache_file.stem}.{cache.path_key(path)}.view.txt")
+
+
+def get_record(path: Path, force: bool = False) -> tuple[dict, Path, Path, bool]:
+    """Cached extraction for `path` plus its compact view (written if absent).
+    Returns (record, cache_path, view_path, cache_hit). Raises on failure."""
+    record = None if force else cache.load_cached(path)
+    if record is not None and record.get("degraded") and convert_doc.available_converters("xlsx"):
+        record = None  # a converter is available now — replace the values-only reading
+    hit = record is not None
+    if record is None:
+        record = extract_any(path)
+        cache_file = cache.save_cache(path, record)
+    else:
+        cache_file = cache.cache_path_for(path)
+    view = view_path_for(cache_file, path)
+    if not hit or not view.exists():
+        cache.write_text_atomic(view, views.render_view(record, cache.rel_path(path)))
+    return record, cache_file, view, hit
+
+
+def source_docx_for(path: Path) -> Path:
+    """The .docx a document submission's graded copy is written from — the
+    file itself, its Word/LibreOffice conversion (.doc), or its rebuilt base
+    (.pdf). Its paragraph indices are the view's [pN] ids."""
+    ext = path.suffix.lower()
+    if ext == ".docx":
+        return path
+    record, *_ = get_record(path)
+    key = "converter_output_path" if ext == ".doc" else "base_docx_path"
+    source = Path(record[key])
+    if not source.exists():  # cache partly cleaned — rebuild
+        record, *_ = get_record(path, force=True)
+        source = Path(record[key])
+    return source
 
 
 def main():
@@ -96,13 +166,7 @@ def main():
     parser.add_argument("--force", action="store_true",
                          help="ignore any existing cache entry and re-extract")
     parser.add_argument("--json", action="store_true",
-                         help="also print the full extracted record, not just the cache path")
-    parser.add_argument("--cache", action="store_true",
-                         help="no-op — extract.py always caches by default; this flag exists "
-                              "only so the documented `extract.py <file> --cache` invocation "
-                              "doesn't error (the per-format extract_*.py scripts use --cache "
-                              "to opt IN to caching, since run standalone they default to a "
-                              "plain one-off dump)")
+                         help="also print the full extracted record, not just the paths")
     args = parser.parse_args()
 
     path = args.file
@@ -116,24 +180,11 @@ def main():
                            "supported": sorted(SUPPORTED)}))
         sys.exit(1)
 
-    if not args.force:
-        cached = cache.load_cached(path)
-        if cached is not None:
-            out = {
-                "cache_hit": True,
-                "cache_path": str(cache.cache_path_for(path)),
-                "summary": cached.get("summary"),
-            }
-            if args.json:
-                out["record"] = cached
-            print(json.dumps(out, indent=2, ensure_ascii=False))
-            return
-
     try:
-        record = extract_any(path)
+        record, cache_file, view, hit = get_record(path, force=args.force)
     except Exception as exc:  # failed conversion, corrupt/unreadable file, ...
-        # Always a JSON error, never a bare traceback, so the agent can flag
-        # the file "unreadable" per grader.md.
+        # Always a JSON error, never a bare traceback, so the grader can
+        # report the file as unreadable.
         if isinstance(exc, (RuntimeError, ValueError)):
             out = {"error": str(exc)}
         else:
@@ -152,10 +203,11 @@ def main():
         print(json.dumps(out))
         sys.exit(1)
 
-    cache_file = cache.save_cache(path, record)
     out = {
-        "cache_hit": False,
+        "cache_hit": hit,
+        "view_path": str(view),
         "cache_path": str(cache_file),
+        "work_dir": str(cache.work_dir_for(path)),
         "summary": record.get("summary"),
     }
     if args.json:

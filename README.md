@@ -1,23 +1,37 @@
 # Grading Assistant
 
-An AI-agent-based system for grading student homework submissions inside [Claude Code]. Two independent agents — a **grader** and a **checker** — extract content from submissions and solution files, compare answers, and produce annotated copies with color-coded feedback, without ever touching the original student files.
+An AI-agent-based system for grading student homework submissions. For each homework, a verified **answer key** is built once from the solution file. Independent **grader** and **checker** agents then grade every submission against it and produce annotated copies with color-coded feedback, without ever touching the original student files.
 
 ## How it works
 
-1. **Grader agent** extracts every piece of content from a submission and its matching solution file (text, equations, embedded images, spreadsheet tabs) via the shared extraction toolkit in [`scripts/`](scripts/README.md) — no ad hoc parsing per submission — compares each answer against the solution, and produces an annotated copy. **Only incorrect or incomplete answers get feedback** — correct answers are left untouched. When grading is done, the grader marks the file **"Grading Completed."**
-2. **Checker agent** independently re-grades the same submission from scratch — without looking at the grader's annotations first — then compares its own verdicts against the grader's. It adds a final **"Review Passed"** or **"Review FAILED"** mark. If it finds discrepancies, it writes them as blue text directly below the "Review FAILED" mark, explicitly listing every problem — no separate file is created.
-3. **No auto-correction loop.** This is a single verification pass by design: if the checker fails a submission, a human reads the in-file discrepancy notes and decides what to do — the checker never sends work back to the grader.
+1. **Answer key (once per homework).**
+   - A **rubric-builder** agent turns the solution file into a question-by-question answer key (the "rubric").
+   - The rubric is a **complete, verbatim reorganization of the solution**. The agent only decides which part of the solution belongs to which question, and a script copies the content word for word. That includes every calculation step, formula, intermediate value and explanation, so feedback quality doesn't depend on a paraphrase.
+   - The script refuses a rubric that leaves any solution content unassigned.
+   - For conceptual questions, the rubric also lists every key point a complete answer must cover.
+   - An independent **rubric-checker** agent then compares the rubric against the raw solution file and records a per-question review. Approval is refused without it. If it finds any issue, the builder must correct it and a fresh checker re-verifies it.
+   - **If the official solution itself looks wrong**, the answer key is put **on hold**. That can come from the rubric-checker, or from any grader or checker who spots it. Grading of that homework pauses and you're asked to decide: the solution stands as written (grading resumes), or it gets corrected or another answer is also accepted (the key is updated and re-verified first).
+   - **No grading starts until the answer key is verified.** After 3 rejected rounds, the system stops and asks you.
+2. **Grader agent.**
+   - It reads the verified answer key and the submission, and decides each question: correct, incorrect or incomplete.
+   - It writes an explanation for every incorrect or incomplete answer; **correct answers get no feedback**.
+   - A script writes the annotated copy and marks it **"Grading Completed"**, so colors, placement and wording are always identical.
+   - The file invisibly records which version of the answer key (and of the solution file) it was graded against, and which question each annotation belongs to. If the key or the solution file later changes, outdated files are found and regraded; one that already carries a checker review is only regraded after asking you.
+3. **Checker agent.**
+   - It first grades the same submission **blind**, against the same answer key, and commits its verdicts to a file. The grader's verdicts can't be viewed through the workflow's audit until it has done so.
+   - A script then compares both sets of verdicts question by question, and audits the mechanics: mark present and exact, annotations placed correctly, correct colors, student content unaltered, current answer key.
+   - It adds **"Review Passed"** or **"Review FAILED"**. For a failure, every problem is listed in blue text directly below the mark, in the same file.
+4. **No auto-correction loop for grading.** This is a single verification pass by design. If the checker fails a submission, you read the in-file discrepancy notes and decide what to do; the checker never sends work back to the grader.
 
-The two agents can run concurrently across a batch of submissions since each works on its own file.
+Graders and checkers run concurrently across a batch (up to 10 of each at a time), since each works on its own file.
 
 ### Efficient by construction
 
-Extraction (parsing Word equations, reading every spreadsheet tab, converting legacy `.doc`/`.xls`) is mechanical and, per the workflow rules, must already be identical between grader and checker — so it's implemented once in [`scripts/`](scripts/README.md) and cached by file content hash instead of being re-derived as ad hoc code on every run:
-- A solutions file shared by a whole class is extracted **once**, not once per student per agent.
-- The checker reuses the grader's cached extraction record rather than re-parsing the file — its **verdict** is still formed independently, without looking at the grader's annotations, exactly as before.
-- `scripts/compare_xlsx.py` deterministically flags purely numeric spreadsheet answers (`auto_correct`/`auto_incorrect`) so neither agent spends reasoning re-checking arithmetic Python can verify exactly — every other cell (text, conceptual, formula-based) is still graded and explained by the agent, same as always.
-
-None of this changes annotation format, placement, verdicts, or the single-pass verification workflow — see [`scripts/README.md`](scripts/README.md) for what changed and why it doesn't affect output quality.
+All mechanical work is done once, in code, by the toolkit in [`scripts/`](scripts/README.md):
+- **Answer key once.** The solution file is read and organized once per homework. Every grader and checker reads the compact, verified rubric instead of the raw solution file, and all of them use the same key-point list, so verdicts on conceptual questions are consistent across students.
+- **Extract once, read compactly.** Every file is extracted once, cached by content hash, and read through a compact text view, which is 60–90% smaller than the raw extraction on real homework. The checker reuses the grader's extraction; its *verdict* is still formed independently.
+- **Scripts write the files.** Annotations, review marks and the checker's mechanical audit are single commands. Agents don't write and debug document-editing code for every submission.
+- **Arithmetic by Python.** `compare_xlsx.py` deterministically flags purely numeric spreadsheet answers, so no agent spends reasoning on arithmetic Python can verify exactly. Every other cell is still judged and explained by the agent.
 
 ## Folder structure
 
@@ -25,57 +39,76 @@ None of this changes annotation format, placement, verdicts, or the single-pass 
 reference-solutions/      # Answer key file(s) — .doc, .docx, .pdf, .xlsx, or .xls
 student-submissions/      # Student submissions (same file types) — read-only, never modified
 graded-submissions/       # Output only — annotated copies (discrepancies, if any, are noted inline)
-scripts/                  # Shared extraction toolkit (see scripts/README.md) — git-tracked code
-.cache/                   # Extraction cache written by scripts/ — git-ignored, safe to delete
-.claude/agents/           # grader.md, grading-checker.md — the two agents' full logic
-.claude/skills/grading-instructions/  # SKILL.md — orchestration workflow
+scripts/                  # Shared grading toolkit (see scripts/README.md) — git-tracked code
+.cache/                   # Written by scripts/ — extractions, verified answer keys, scratch; git-ignored
+.claude/agents/           # rubric-builder.md, rubric-checker.md, grader.md, grading-checker.md
+.claude/skills/grading-instructions/  # SKILL.md (orchestration workflow) + extraction-fallback.md
 requirements.txt          # Python dependencies for scripts/ (installed into .venv/)
 .venv/                    # Private Python environment — per machine, git-ignored, not synced by Dropbox
 CLAUDE.md                 # Quick-reference project rules
 ```
 
-The three data folders (`reference-solutions/`, `student-submissions/`, `graded-submissions/`) are git-ignored — their contents stay on your machine and are never committed or pushed, since they hold student work. Only a `.gitkeep` in each is tracked so the folders exist after cloning. `.cache/` and `.venv/` are also git-ignored (derived extraction data and the per-machine Python environment, respectively — both safe to delete and rebuild).
+The three data folders (`reference-solutions/`, `student-submissions/`, `graded-submissions/`) are git-ignored. Their contents stay on your machine and are never committed or pushed, since they hold student work. Only a `.gitkeep` in each is tracked, so the folders exist after cloning. 
+`.cache/` and `.venv/` are also git-ignored. Both are safe to delete and rebuild. Deleting `.cache/rubrics/` means each homework's answer key is rebuilt and re-verified on the next run.
 
 ### Optional per-homework subfolders
 
-Both `reference-solutions/` and `student-submissions/` can either be flat, or organized into per-assignment subfolders (e.g. `HW1/`, `HW2/`) — independently on each side, and mixed layouts are fine (some assignments flat, others subfoldered, at the same time).
+Both `reference-solutions/` and `student-submissions/` can be flat or organized into per-assignment subfolders (e.g. `HW1/`, `HW2/`). The two sides are independent, and mixed layouts are fine (some assignments flat, others subfoldered, at the same time).
 
-- A submission in `student-submissions/HW1/` is matched to `reference-solutions/HW1/` by **exact folder name** — `HW1` will not match `Homework 1` or `hw1_solutions`.
-- A flat submission is matched to a flat solutions file by content (subject/case name, file type), since filenames aren't required to match — if more than one flat solutions file could plausibly apply, the system asks rather than guessing.
-- If no confident match is found, the system stops and asks rather than guessing.
+- A submission in `student-submissions/HW1/` is matched to `reference-solutions/HW1/` by **exact folder name**. `HW1` will not match `Homework 1` or `hw1_solutions`.
+- A flat submission is matched to a flat solutions file by content (subject/case name, file type), since filenames aren't required to match. If more than one flat solutions file could plausibly apply, the system asks rather than guessing.
+- If no confident match is found, the system stops and asks.
 - Output mirrors the input: a submission from `HW1/` produces its graded file in `graded-submissions/HW1/`.
+
+### Identical submissions
+
+If two students hand in byte-identical files (a copied submission, or an untouched template), each is still treated as its own submission and identified by its **file name**. Each student gets their own graded file (`alice_hw1_Graded.docx`, `bob_hw1_Graded.docx`), their own working files, and their own grading and checking run. No student's file name appears in another student's grading. Only the mechanical reading of the file is shared behind the scenes, since the content is the same.
 
 ## Supported file types
 
 | Input | Output |
 |---|---|
 | `.doc`, `.docx`, `.pdf` | `[name]_Graded.docx` |
-| `.xlsx`, `.xls` | `[name]_Graded.xlsx` (`.xls` is always upgraded to `.xlsx`, since the legacy format can't reliably round-trip formatting) |
+| `.xlsx`, `.xls` | `[name]_Graded.xlsx` |
+
+- **Legacy `.doc` / `.xls`** are converted to `.docx` / `.xlsx` by Microsoft Word/Excel (Windows) or LibreOffice, so formulas, formatting and images carry over into the graded copy.
+- **`.pdf`** submissions are rebuilt as a `.docx`, one paragraph per line, so feedback can sit directly under the answer line. Embedded images and equations appear as pictures of the student's own work. Pages with images, garbled equation text or drawn charts are flagged and also read from a rendered picture of the whole page, so scanned or handwritten pages are still graded.
+- **Embedded images** (pasted work, figures, equations stored as pictures) are exported so the agents can look at each one. There's no OCR, so image content is always read visually.
+- **Charts and text boxes:**
+  - A Word or Excel chart (including one on its own chart tab) is read as its data (type, title, every series).
+  - A PDF chart drawn as vectors is flagged and pictured.
+  - An answer typed into a spreadsheet text box is read, and kept in the graded copy.
+- **Spreadsheets** are read tab by tab, hidden tabs included, with both each formula and its value.
 
 ## Reading the annotations
 
 **Documents (.docx output):**
-- Red text is inserted immediately below each incorrect/incomplete answer, formatted as `**INCORRECT**: [why, and what the correct answer is]` or `**INCOMPLETE**: [what's missing]`.
+- Red text is inserted immediately below each incorrect/incomplete answer, formatted as **INCORRECT**: [the correct answer, the working behind it, and what specifically went wrong] or **INCOMPLETE**: [what's missing].
 - `Grading Completed` appears in red at the end of the document once the grader is done.
-- `Review Passed` or `Review FAILED` is added in **blue** as its own paragraph by the checker, right after the grader's red "Grading Completed" mark. If it's a "Review FAILED," every discrepancy is listed in blue text right below the mark, in the same file.
+- `Review Passed` or `Review FAILED` is added in **blue** by the checker, as its own paragraph right after "Grading Completed". For a "Review FAILED", every discrepancy is listed in blue right below the mark, in the same file.
 
 **Spreadsheets (.xlsx output):**
-- Each incorrect/incomplete answer **cell itself** is highlighted using Excel's standard "Bad" style (light red fill, dark red font) — the value/formula is never changed, only its formatting.
-- An explanation is written in red text into the closest empty cell to it (right, then below, then further out) — existing cell content is never overwritten.
-- A dedicated **"Grading Summary"** tab (added as the last sheet) carries `Grading Completed` (red) and, once checked, `Review Passed`/`Review FAILED` (blue).
+- Each incorrect/incomplete answer **cell itself** is highlighted in Excel's standard "Bad" style (light red fill, dark red font). The value/formula is never changed, only its formatting.
+- An explanation is written in red into the closest empty, visible cell (right, then below, then further out). Existing cell content is never overwritten, and hidden rows/columns are skipped.
+- A dedicated **"Grading Summary"** tab (the last sheet) carries `Grading Completed` (red) and, once checked, `Review Passed` / `Review FAILED` (blue), plus a table of any discrepancies.
 
-**Conceptual / short-answer / essay questions:** for written-sentence answers, the system doesn't just judge overall direction — it checks the student's answer against every key term or point the solution's explanation relies on. If the answer is coherent but missing a specific point, it's marked **INCOMPLETE** and every missing point is named explicitly (never a vague "explanation incomplete").
+**Conceptual / short-answer / essay questions:** for written-sentence answers, the system checks the student's answer against every key point the answer key lists for that question, not just its overall direction. If the answer is coherent but misses a specific point, it's marked **INCOMPLETE** and every missing point is named explicitly (never a vague "explanation incomplete").
 
 If nothing is annotated and the mark is "Review Passed," every question was answered correctly.
 
-**No total score:** neither agent calculates or writes a total score/grade (e.g. "8/10", "80%", a letter grade) — only per-question verdicts and explanations are recorded. Totaling up a grade from the per-question verdicts is left to the human instructor.
+**No total score:** no agent calculates or writes a total score/grade. Only per-question verdicts and explanations are recorded; totaling a grade is left to you.
 
 ## How to use it
 
 ### Prerequisites
 - Claude Code with access to this repository.
-- Python 3.9+ and a one-time environment setup: `python scripts/setup_env.py`. This creates a private virtual environment in `.venv/` and installs the toolkit's dependencies into it (`python-docx`, `pypdf`, `openpyxl`, `Pillow` (openpyxl needs it to see — and, when saving `_Graded.xlsx`, keep — embedded images), `lxml`, `PyMuPDF`, `xlrd<2.0`, `olefile`) — nothing is installed into your system Python. `.venv/` is git-ignored and excluded from Dropbox sync, so each machine builds its own; re-run the command after `requirements.txt` changes. All grading runs then use `.venv/Scripts/python` (Windows) / `.venv/bin/python` (macOS/Linux) automatically.
-- LibreOffice, for legacy `.doc` files only — `scripts/convert_doc.py` uses it headless to convert `.doc` to `.docx` and finds it on PATH or in its standard install location. (`pandoc` can't read `.doc`.) Without it, `.doc` submissions are flagged unreadable rather than guessed at.
+- Python 3.9+ and a one-time environment setup: `python scripts/setup_env.py`.
+  - It creates a private virtual environment in `.venv/` and installs the toolkit's dependencies from `requirements.txt` (including `pywin32` on Windows, for the Word/Excel conversion). Nothing is installed into your system Python.
+  - `.venv/` is excluded from git and Dropbox sync, so each machine builds its own. Re-run the command after `requirements.txt` changes.
+- For legacy `.doc` / `.xls` files, one of:
+  - **Microsoft Word / Excel** (Windows), used automatically when installed; or
+  - **LibreOffice**, found on PATH or in its standard install location.
+  Without either, `.doc` files are flagged unreadable rather than guessed at, and `.xls` files are graded from cell values only (clearly marked **DEGRADED**, since formulas are then unavailable). Everything else needs no extra software.
 
 ### 1. Add your files
 - Put the answer key in `reference-solutions/`.
@@ -88,24 +121,36 @@ Just ask, in plain language, for example:
 - "grade student-submissions/HW1/john_doe.docx against reference-solutions/HW1/answer_key.docx"
 
 This runs the `/grading-instructions` skill, which will:
-1. Inspect the folder structure and match each submission to its solution file (asking you to confirm if a match is ambiguous).
-2. Run the grader agent on each submission.
-3. Run the checker agent once a submission is marked "Grading Completed."
+1. Inspect the folder structure and match each submission to its solution file, asking you to confirm if a match is ambiguous.
+2. Build and independently verify the answer key for each solution file. A key that's already verified is reused, and if a key can't be verified after 3 correction rounds, you're asked how to proceed. If anyone questions the official solution, that homework pauses until you decide.
+3. Run the grader agent on each submission.
+4. Run the checker agent once a submission is marked "Grading Completed."
+5. Before the final summary, check every graded file against the current answer key and regrade any that are outdated.
 
 ### 3. Review the output
 - Open the corresponding file in `graded-submissions/`.
 - Read the red annotations for what was marked wrong and why.
 - Check the blue mark at the end (or on the "Grading Summary" tab) for the checker's final verdict.
-- If it says **Review FAILED**, read the discrepancies listed in blue text right below the mark in that same graded file, and decide manually how to proceed — the system will not auto-correct or re-grade on its own.
+- If it says **Review FAILED**, read the discrepancies listed in blue right below the mark in that same file, and decide manually how to proceed. The system will not auto-correct or re-grade on its own.
+- Read Claude's end-of-run summary too. It reports any unreadable submissions (no graded file is created for those), any DEGRADED `.xls` grading, and any graded files that are outdated because the answer key changed. Concerns about the official solution are raised as soon as they come up, before grading continues.
+- Avoid keeping a graded file open in Word or Excel while grading is still running: its checker writes the review mark into that same file.
 
-## Important: this is AI-assisted grading
+## Important: AI-assisted grading
 
-The grader and checker are independent, but both are AI agents interpreting free-form student work — treat "Review Passed" as a strong second opinion, not an infallible verdict. Spot-check a sample of graded files yourself, especially for high-stakes grading, ambiguous/creative answers, or anything the checker flagged as low-confidence or ambiguous.
+The rubric checker, grader and checker are independent, but all of them are AI agents interpreting free-form work. Treat "Review Passed" as a strong second opinion, not an infallible verdict. Spot-check a sample of graded files yourself, especially for high-stakes grading, ambiguous or creative answers, or anything the checker flagged as ambiguous. Glancing over the answer key (`.cache/rubrics/<id>/rubric.md`) before a large batch is also worthwhile, since every submission is graded against it.
+
+Known limitations:
+- Images and handwriting are read visually by the agents, never by OCR, so check answers that exist only as a picture with extra care.
+- The data inside embedded objects (e.g. an Excel sheet pasted into a Word file) isn't read; only its preview picture is.
+- A greyscale diagram drawn inside a PDF is flagged and read from the page picture, but isn't reproduced in the rebuilt graded copy.
+- The graded copy of a PDF is a rebuilt Word document, so its layout won't match the original exactly.
 
 ## Where to look for more detail
 
-- [`.claude/agents/grader.md`](.claude/agents/grader.md) — full grader logic and extraction methods
+- [`.claude/skills/grading-instructions/SKILL.md`](.claude/skills/grading-instructions/SKILL.md) — orchestration workflow, folder-matching rules, answer-key loop, discrepancy types
+- [`.claude/agents/rubric-builder.md`](.claude/agents/rubric-builder.md) / [`rubric-checker.md`](.claude/agents/rubric-checker.md) — how the answer key is built and verified
+- [`.claude/agents/grader.md`](.claude/agents/grader.md) — full grader logic and feedback standards
 - [`.claude/agents/grading-checker.md`](.claude/agents/grading-checker.md) — full checker logic
-- [`.claude/skills/grading-instructions/SKILL.md`](.claude/skills/grading-instructions/SKILL.md) — orchestration workflow, folder-matching rules, discrepancy types
-- [`scripts/README.md`](scripts/README.md) — the shared extraction toolkit: what it does, why it's cached, how to extend it
+- [`.claude/skills/grading-instructions/extraction-fallback.md`](.claude/skills/grading-instructions/extraction-fallback.md) — manual extraction and image-inspection methods
+- [`scripts/README.md`](scripts/README.md) — the toolkit: what each script does, the cache, how to extend it
 - [`CLAUDE.md`](CLAUDE.md) — quick-reference project rules

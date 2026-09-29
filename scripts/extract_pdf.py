@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Extract text from a PDF, flag pages whose text layer likely corrupted an
-equation, and flag pages containing embedded raster images, per grader.md's
-"Equation Extraction" caveats.
+equation, and flag pages containing embedded raster images, per the equation caveats in
+.claude/skills/grading-instructions/extraction-fallback.md.
 
 Word-exported PDFs flatten equations to positioned glyphs with no math
 markup — plain text extraction commonly emits Unicode Mathematical
@@ -17,13 +17,15 @@ answer as an image with otherwise perfectly clean surrounding text, so this
 check does NOT depend on the text looking suspicious; any page with an
 embedded image is flagged and rendered too.
 
+Normally used through extract.py (cached; it also rebuilds the PDF as the
+base .docx the graded copy is written from). Run standalone it just prints
+the record.
+
 Usage:
     .venv/Scripts/python scripts/extract_pdf.py <file.pdf>
-    .venv/Scripts/python scripts/extract_pdf.py <file.pdf> --cache
 """
 from __future__ import annotations
 
-import argparse
 import json
 import re
 import sys
@@ -36,9 +38,10 @@ from pypdf import PdfReader
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib import cache  # noqa: E402
+from lib.pdf_docx import graphic_regions  # noqa: E402
 
-MATH_ALPHANUMERIC_RE = re.compile(r"[\U0001D400-\U0001D7FF]")
-# A short word/token immediately repeated with no separator: "PVPV", "12001200"
+MATH_ALPHANUMERIC_RE = re.compile("[\U0001D400-\U0001D7FF]")
+# A short token immediately repeated with no separator: "PVPV", "12001200".
 DOUBLED_TOKEN_RE = re.compile(r"\b(\w{2,8})\1\b")
 
 
@@ -46,105 +49,67 @@ def flag_reasons(text: str) -> list[str]:
     reasons = []
     if MATH_ALPHANUMERIC_RE.search(text):
         reasons.append("mathematical_alphanumeric_symbols")
-    if DOUBLED_TOKEN_RE.search(text):
+    # Ignore short all-digit repeats — ordinary numbers like 2020 or 1010 —
+    # which would otherwise flag (and render) nearly every page.
+    if any(not (m.group(1).isdigit() and len(m.group(1)) <= 2)
+           for m in DOUBLED_TOKEN_RE.finditer(text)):
         reasons.append("doubled_characters")
     return reasons
 
 
-def extract_pdf(path: Path, render_dir: Path, file_hash: str) -> dict:
+def extract_pdf(path: Path, render_dir: Path | None = None) -> dict:
+    """`render_dir`: where flagged pages are rendered to PNG (page<N>.png);
+    without it nothing is rendered."""
     reader = PdfReader(str(path))
     doc = pymupdf.open(str(path))
 
     pages = []
-    flagged_count = 0
-    pages_with_images = 0
-    total_images = 0
     for i, page in enumerate(reader.pages):
         text = page.extract_text() or ""
         reasons = flag_reasons(text)
-
         image_count = len(doc[i].get_images(full=True))
         if image_count:
-            pages_with_images += 1
-            total_images += image_count
-            reasons = reasons + ["embedded_image"]
+            reasons.append("embedded_image")
+        if graphic_regions(doc[i])[1]:  # a chart/diagram drawn as vectors, not an image
+            reasons.append("vector_graphics")
 
         render_path = None
-        if reasons:
-            flagged_count += 1
+        if reasons and render_dir is not None:
             render_dir.mkdir(parents=True, exist_ok=True)
-            render_path = render_dir / f"{file_hash}_p{i}.png"
-            if not render_path.exists():
-                pix = doc[i].get_pixmap(dpi=200)
-                pix.save(str(render_path))
+            target = render_dir / f"page{i + 1}.png"
+            if not target.exists():
+                doc[i].get_pixmap(dpi=200).save(str(target))
+            render_path = cache.rel_path(target)
 
-        pages.append({
-            "index": i,
-            "text": text,
-            "suspicious": bool(reasons),
-            "flagged_reasons": reasons,
-            "image_count": image_count,
-            "render_path": str(render_path) if render_path else None,
-        })
-
+        pages.append({"text": text, "flagged_reasons": reasons,
+                      "image_count": image_count, "render_path": render_path})
     doc.close()
 
+    flagged = sum(1 for pg in pages if pg["flagged_reasons"])
     return {
         "type": "pdf",
         "pages": pages,
         "summary": {
             "page_count": len(pages),
-            "flagged_pages": flagged_count,
-            "pages_with_images": pages_with_images,
-            "image_count": total_images,
+            "flagged_pages": flagged,
+            "pages_with_images": sum(1 for pg in pages if pg["image_count"]),
+            "image_count": sum(pg["image_count"] for pg in pages),
             "note": (
-                "Pages with suspicious text or embedded images "
-                "(flagged_reasons non-empty) have a rendered PNG at "
-                "render_path — read that image directly rather than "
-                "trusting the text field for any equation OR any content "
-                "that might be an embedded image (pasted work, a scanned "
-                "figure) on that page; a page can hold a real answer as an "
-                "image while its surrounding text looks perfectly normal."
-            ) if flagged_count else None,
+                "FLAGGED pages (suspected corrupted equation text, an embedded image, or a "
+                "vector chart/diagram) "
+                "have a rendered PNG — read it rather than trusting the text: a page can hold "
+                "a real answer as an image while its surrounding text looks normal."
+            ) if flagged else None,
         },
     }
 
 
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
-    parser = argparse.ArgumentParser(description=__doc__,
-                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("file", type=Path)
-    parser.add_argument("--cache", action="store_true")
-    parser.add_argument("--force", action="store_true")
-    args = parser.parse_args()
-
-    if not args.file.exists():
-        print(json.dumps({"error": f"file not found: {args.file}"}))
+    if len(sys.argv) != 2 or not Path(sys.argv[1]).exists():
+        print(json.dumps({"error": "usage: extract_pdf.py <existing file.pdf>"}))
         sys.exit(1)
-
-    if args.cache and not args.force:
-        cached = cache.load_cached(args.file)
-        if cached is not None:
-            print(json.dumps({
-                "cache_hit": True,
-                "cache_path": str(cache.cache_path_for(args.file)),
-                "summary": cached.get("summary"),
-            }, indent=2))
-            return
-
-    file_hash = cache.sha256_of(args.file)
-    record = extract_pdf(args.file, cache.RENDER_DIR, file_hash)
-
-    if args.cache:
-        cache_file = cache.save_cache(args.file, record)
-        print(json.dumps({
-            "cache_hit": False,
-            "cache_path": str(cache_file),
-            "summary": record["summary"],
-        }, indent=2))
-    else:
-        print(json.dumps(record, indent=2, ensure_ascii=False))
+    print(json.dumps(extract_pdf(Path(sys.argv[1])), indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":

@@ -6,85 +6,102 @@ description: Independently verifies grading by comparing student submissions aga
 # Grading Checker Agent
 
 ## Responsibility
-Verify grading quality (single pass, no corrections):
-1. Verify "Grading Completed" mark exists in graded document
-2. Grade independently using the shared extraction toolkit for precision (same cached record the grader used, per `scripts/README.md`)
-3. Extract verdicts from grader's red annotations in document
-4. Compare independent verdicts against grader's annotations
-5. Mark final verdict: "Review Passed" (✓) OR "Review FAILED" with explicit problems
+Verify grading quality in a single pass (no corrections):
+1. Confirm the grader finished (`Grading Completed` mark)
+2. Grade the submission **blind** against the same verified rubric, and **commit** your verdicts to a file before seeing any of the grader's
+3. Only then produce the audit report (the grader's annotations, an automatic verdict comparison, mechanical problems) and review it question by question
+4. Mark the final verdict with `scripts/mark_review.py`: `Review Passed`, or `Review FAILED` with every problem stated
+
+The scripts enforce this order. The audit report can't be produced without your committed blind verdicts, and `mark_review.py` refuses without that report.
 
 ## Input
-- `submission_file`: student submission in `student-submissions/` (.doc, .docx, .pdf, .xlsx, or .xls) — may be directly in that folder or inside a per-homework subfolder (e.g. `student-submissions/HW1/`)
-- `graded_file`: `_Graded.docx` or `_Graded.xlsx` in `graded-submissions/` (or its matching homework subfolder) — contains all verdicts in annotations
-- `solutions_file`: the matched solutions file in `reference-solutions/` (.doc, .docx, .pdf, .xlsx, or .xls) — same file the grader used (see `SKILL.md` Step 0 for the matching rule)
+- `submission_file`: the student submission in `student-submissions/` (possibly in a per-homework subfolder)
+- `graded_file`: the `_Graded.docx` / `_Graded.xlsx` in `graded-submissions/` (or its matching subfolder)
+- `solutions_file`: the matched solutions file in `reference-solutions/`, the same one the grader used
+
+**Python:** always run `.venv/Scripts/python` (Windows; `.venv/bin/python` on macOS/Linux), never a bare `python`/`pip`. This applies to the toolkit and to any ad hoc code. If `.venv/` is missing, run `python scripts/setup_env.py` once first.
 
 ## Process
 
-### Step 1: Verify Grading Completion
-- **.docx graded file**: open it and check the end of the document for the mark: **"Grading Completed"** (in red ink text)
-- **.xlsx graded file**: open it and check for a **"Grading Summary"** worksheet tab containing **"Grading Completed"** (in red text)
-- **CRITICAL**: If this mark is NOT present, do NOT proceed with checking
-  - Return error message: "Grading not yet marked complete. Grader must add 'Grading Completed' mark before checker can proceed."
-  - Wait for grader to complete grading and add the mark
-- If mark is present, proceed to Step 2
+### Step 1: Verify grading completion
+- Run `.venv/Scripts/python scripts/audit_graded.py <graded_file> <submission_file> --solutions <solutions_file>`. It shows only the mark status and any `rubric_problems`, nothing of the grader's verdicts.
+- If `grading_completed` is false (exit code 2), **stop**: "Grading not yet marked complete. Grader must add 'Grading Completed' mark before checker can proceed."
+- If `review_mark_present` is true, the file was already reviewed. Stop and report that; this is a single pass only.
+- `rubric_problems` (e.g. graded against an outdated rubric) are carried into the report in Step 3. Continue.
 
-### Step 2: Blind Grade (Fresh Grading)
-**Do NOT look at grader's output yet** — this is about independent *judgment*, not independent parsing (see note below)
-- **Private Python environment**: all Python in this project runs with the project venv's interpreter — `.venv/Scripts/python` on Windows (`.venv/bin/python` on macOS/Linux) — never a bare `python`/`pip`. That covers the `scripts/` toolkit *and* any ad hoc Python an agent writes itself (e.g. python-docx/openpyxl code that writes annotations). If `.venv/` doesn't exist yet, create it once with `python scripts/setup_env.py` before anything else.
-- **Run `.venv/Scripts/python scripts/extract.py <file>`** (caching is automatic, no flag needed) for both the submission and the solutions file — the same shared extraction toolkit the grader used (see `scripts/README.md`). Because extraction is deterministic and `grader.md` already requires grader and checker to use the *identical* method, this call reuses the grader's cached record instead of re-parsing the file: **mechanical extraction is shared, but your verdict is not** — form it yourself from the extracted content without reading the grader's annotations first.
-  - If the record looks incomplete for something the script doesn't handle well, fall back to the manual method in `grader.md`'s "Equation Extraction" / "Spreadsheet Extraction" sections for that one file, same as the grader would.
-  - **Check for embedded images on every format** — `docx`/`xlsx` give an exact `summary.image_count`; `.doc` gives a heuristic `doc_image_heuristic.likely_has_images` (cross-checked against the converted docx's count, or the only signal available if conversion fails); `.pdf` gives per-page `image_count` (independent of the equation-corruption flag — a page can look textually clean and still hold a real answer as an image) with the page rendered to PNG; `.xls` gives a heuristic `summary.likely_has_images` (not exact, see `grader.md`'s "Spreadsheet Extraction"). Any signal means inspect the image directly — the `image_warning` field, when present, gives the exact `unzip` command to run (it extracts into `.cache/inspect/<name>/`, the project's existing scratch area, never an ad hoc path) — or read the rendered PDF page. Do this rather than trusting the text/cells alone, especially before disputing a figure the grader used.
-- For spreadsheets, also run `.venv/Scripts/python scripts/compare_xlsx.py <submission_file> <solutions_file>` for a deterministic pre-check on purely numeric answer cells — use it to confirm objective arithmetic quickly, but still independently judge every `needs_review` and `sheet_missing_in_submission` cell and form your own verdict on every `auto_correct`/`auto_incorrect` cell before comparing to the grader's annotations in Step 3. `likely_downstream_of` on an `auto_incorrect` cell is a hint, not a verdict — still confirm the cascade yourself.
-- Compare answers against solutions file
-  - **Conceptual/explanation/interpretation questions** (written-sentence answers): identify the key words/points the solution's answer relies on and check the student's answer against each one individually — a coherent, right-direction answer that omits a key point is still **incomplete**, not correct. See `grader.md`'s "Conceptual/Explanation/Interpretation Questions" section for the same method the grader must use.
-- Determine verdict for each question: correct, incorrect, or partial
-- Build verdicts list: `{question_number, student_answer, correct_answer, verdict, explanation}`
+### Step 2: Blind grade (independent judgment)
+- Run `.venv/Scripts/python scripts/rubric.py path <solutions_file>` and Read the rubric. It also prints `question_ids`. If it errors (not verified, stale, or on hold), stop and report the error.
+  - The rubric is the solutions file's content, copied verbatim by script and independently verified. Sharing it with the grader is intended, like sharing extraction. Your independence lies in your *verdicts*, not in re-parsing files.
+  - **Grade only by the rubric.** You may open the raw solutions view (`extract.py <solutions_file>` → `view_path`) to *look at* content the rubric points to. If you believe the rubric or official solution is wrong for a question, **stop** without marking the file and report `RUBRIC CONCERN` (question id, what it says, what you believe is right, and why). The orchestrator puts the answer key on hold and asks the user.
+- Run `.venv/Scripts/python scripts/extract.py <submission_file>` and Read the **view** at `view_path` (not the JSON). It is usually a cache hit from the grader's run.
+- Heed every view warning (`!` lines, `(image)` tags, `FLAGGED` PDF pages) and inspect that content directly, especially before disputing something the grader based on a figure. Charts show their data inline, and spreadsheet text boxes are listed as `textboxN`. See `.claude/skills/grading-instructions/extraction-fallback.md` when needed.
+- **Spreadsheets:** run `.venv/Scripts/python scripts/compare_xlsx.py <submission_file> <solutions_file>` for the deterministic numeric pre-check.
+  - It uses the rubric's per-question tolerances.
+  - It labels `rounded` / `percent_scale` mismatches and `found_at` / `PROBABLE LAYOUT SHIFT` cases. Judge those yourself: rounding within the rubric's tolerance, or a merely shifted layout, is not a wrong answer.
+  - Still independently judge every `needs_review` and `sheet_missing_in_submission` cell, and confirm `likely_downstream_of` cascades yourself.
+- For **every** question in the rubric: decide `correct`, `incorrect`, `incomplete` (partial), or `unreadable`, with your own explanation.
+  - **Conceptual answers:** check the student's answer against **every** rubric key point. A coherent answer that omits one is **incomplete**. This is the same method as `grader.md` Step 3.
+- **Commit your blind verdicts** to `<work_dir>/checker_blind.json`, one entry for every rubric question:
+  ```json
+  {"verdicts": [
+    {"question": "Q1", "verdict": "correct"},
+    {"question": "Q2", "verdict": "incorrect", "explanation": "…"},
+    {"question": "Q3", "verdict": "incomplete", "explanation": "missing key point …"}]}
+  ```
 
-### Step 3: Compare Against Grader's Annotations in Document
-- **.docx**: extract verdicts from the red annotation paragraphs in `_Graded.docx`
-- **.xlsx**: extract verdicts from `_Graded.xlsx` using two independent signals that must agree:
-  - **Cell highlight**: each incorrect/incomplete answer cell should have a light red fill (`FFC7CE`) + dark red font (`9C0006`) — Excel's "Bad" style — without its value/formula changed. Compare the set of highlighted cells against your own independently-determined set of incorrect/incomplete cells.
-  - **Explanation annotation**: check the closest cells (right, then below, then outward) to each highlighted answer cell on the same tab for red-font explanation text, matching the same search order the grader used to place them
-- Compare your independent verdicts against the grader's annotations, question by question:
-  - **Verdict match?** ✓ (correct/incorrect agreement)
-  - **Verdict mismatch?** ✗ (you say correct, grader says incorrect, or vice versa)
-  - **Explanation reasonable?** (is the annotation clear and accurate?)
-  - **Question skipped?** (is the grader missing any incorrect/incomplete question, on any sheet/tab?)
-  - **Annotation misplaced?** (for .xlsx: is the red text NOT the closest empty cell to its answer, or does it overwrite a non-empty cell?)
-  - **Highlight missing/mismatched?** (for .xlsx: is an incorrect/incomplete cell missing its red highlight, or is a correct cell highlighted when it shouldn't be, or was the cell's value/formula altered by the highlight edit?)
-  - **Key point missed?** (for conceptual/explanation questions: did the grader miss a key word/point that you independently found absent from the student's answer, or mark an answer correct despite a missing key point, or name a "missing" point that's actually present?)
+### Step 3: Audit report and comparison
+- Run `.venv/Scripts/python scripts/audit_graded.py <graded_file> <submission_file> --solutions <solutions_file> --report --blind <work_dir>/checker_blind.json`, then Read the `report_path` it prints.
+- The report contains:
+  - **`comparison`**: for each rubric question, your verdict against the grader's (no annotation = the grader judged it correct), with a status:
+    - `agree`
+    - `verdict_mismatch`: correct vs. not correct (or unreadable)
+    - `label_mismatch`: INCORRECT vs. INCOMPLETE, both "wrong" but with a different verdict
+  - **`annotations`**: every grader annotation.
+    - Each has its rubric `question` (from the hidden tag the grader's script wrote), verdict label and full text.
+    - For documents, `after` is the view id of the block it sits under: `pN`, `tN`, `sN`, or a table cell `tN:rRcC` it was placed in. `answer_text` is that block's text.
+    - For workbooks: `answer_cell` (the highlighted cell), `answer_value` and `annotation_cell`.
+  - **`problems`**: facts established by the script, each of which is a real discrepancy:
+    - `outdated_rubric`: graded against an answer key that is no longer the verified one (or against an earlier version of the solutions file)
+    - original content altered, or an annotation overwriting a non-empty cell
+    - wrong colour shade or a reworded mark
+    - an annotation after the mark, below a blank line, or in a hidden row/column
+    - a highlight without an annotation, or an annotation that isn't the closest empty visible cell
+    - an annotation with no question tag
+- Then, question by question, also judge what the script can't:
+  - **Annotation under the wrong answer?** Its `after` / `answer_cell` isn't where that question's answer is → `annotation_placement`.
+  - **Explanation wrong, unclear or unspecific?** It doesn't state the correct answer and working, or doesn't pinpoint the student's actual error → `explanation_error`.
+  - **Multi-part question only partly addressed** → `incomplete_coverage`.
+  - **Workbook:** an incorrect cell not highlighted, or a correct cell highlighted → `cell_highlight_missing`.
+  - **Key point missed:** the grader missed a key point you found absent, marked an answer correct despite a missing key point, or named a "missing" point that's actually present → `missing_keypoint_not_flagged`.
+  - A `verdict_mismatch` where the grader skipped the question entirely can be recorded as `missed_question` instead.
 
-### Step 4: Mark Final Verdict (Single Pass, No Corrections)
-Color is pinned exactly: **BLUE = hex `0000FF`** (e.g. `RGBColor(0x00, 0x00, 0xFF)` in python-docx) for every mark in this step — never a different shade of blue, so every checked file looks identical.
-- **.docx**:
-  - No discrepancies: Add a mark, blue (hex `0000FF`), to end of document (as its own paragraph, after the grader's red "Grading Completed" mark) → ✓ complete. The new paragraph's text is **exactly** `Review Passed` — **NOT** `Grading Completed | Review Passed`, **NOT** `Review Passed ✓` or any other variant; don't prepend "Grading Completed" again just because the preceding red paragraph says it, and don't append a checkmark or other decoration to the text itself.
-  - Discrepancies found: Add a mark, blue (hex `0000FF`), to end of document (same placement, text **exactly** `Review FAILED` — no variant, no decoration — same **NOT** rule as above) → Proceed to Step 5 to explicitly state problems
-- **.xlsx**:
-  - No discrepancies: On the **"Grading Summary"** tab, add a new row below "Grading Completed" with blue (hex `0000FF`) text, **exactly** `Review Passed` → ✓ complete
-  - Discrepancies found: On the **"Grading Summary"** tab, add a new row below "Grading Completed" with blue (hex `0000FF`) text, **exactly** `Review FAILED` → Proceed to Step 5 to explicitly state problems
-
-### Step 5: State Every Problem (If Discrepancies Found)
-**No separate report file is created** — every discrepancy is written directly into the graded file, immediately below the "Review FAILED" mark, in blue text.
-
-- **.docx**: below the `Review FAILED` line, add one paragraph per discrepancy, blue (hex `0000FF`, same as the verdict mark):
-  - `Q[question_number] — [type]: checker says [checker_verdict] ([checker_explanation]); grader says [grader_verdict] ([grader_explanation]). [notes]`
-  - `type` is one of: `verdict_mismatch`, `missed_question`, `annotation_placement`, `explanation_error`, `incomplete_coverage`, `cell_highlight_missing`, `missing_keypoint_not_flagged`
-  - After the per-question lines, add one closing summary line, same blue (hex `0000FF`), e.g. "Grader's verdicts agree with the checker on every question except Q2 (marked correct when incorrect)." — describe agreement/disagreement only, never a score or fraction.
-- **.xlsx**: on the **"Grading Summary"** tab, below the `Review FAILED` row, add one row per discrepancy, same blue (hex `0000FF`), with the same fields (question number, type, checker verdict/explanation, grader verdict/explanation, notes), followed by one closing summary row in the same blue.
+### Step 4: Mark the final verdict (script, single pass)
+- **Passed** only when the comparison is all `agree`, there are no `problems`, and you found nothing else. Run `.venv/Scripts/python scripts/mark_review.py <graded_file> passed --submission <submission_file>`. The script refuses `passed` otherwise.
+- **Otherwise failed:**
+  1. Write `<work_dir>/discrepancies.json`. It must include every non-`agree` comparison row, with that row's status as the `type` (`verdict_mismatch` / `label_mismatch`; a skipped question's `verdict_mismatch` may be `missed_question` instead). Then add every `problems` entry from the report (with its `type`) and everything else you found:
+     ```json
+     {"discrepancies": [
+        {"question": "Q2", "type": "verdict_mismatch",
+         "checker_verdict": "incorrect", "checker_explanation": "…",
+         "grader_verdict": "correct", "grader_explanation": "(no annotation)", "notes": "…"},
+        {"type": "outdated_rubric", "notes": "graded against answer-key round 1; the verified key is now round 2"}],
+      "summary": "Grader's verdicts agree with the checker on every question except Q2 (marked correct when incorrect)."}
+     ```
+     - `question`, `checker_verdict` and `grader_verdict` are required for `verdict_mismatch`, `label_mismatch` and `missed_question`. A problem about the whole file may leave them out, but must say what is wrong in `notes`.
+     - The summary describes agreement/disagreement only, never a score or fraction.
+     - Put ambiguity notes in `notes`.
+  2. Run `.venv/Scripts/python scripts/mark_review.py <graded_file> failed <work_dir>/discrepancies.json --submission <submission_file>`. It refuses if a disagreement from the report, or any kind of problem it lists, is missing.
+- The script writes the exact pinned marks: blue `0000FF` `Review Passed` / `Review FAILED`. For a failed review it adds one blue line (docx) or row (xlsx "Grading Summary" tab) per discrepancy directly below the mark, then the summary line. It refuses a second review.
+- Never hand-edit the graded file, and never create a separate report file.
 
 ## Output
-- **No discrepancies**: `_Graded.docx`/`_Graded.xlsx` with `Review Passed` mark (blue, hex `0000FF`) added → Grading complete ✓
-- **Discrepancies found**: `_Graded.docx`/`_Graded.xlsx` with `Review FAILED` mark (blue, hex `0000FF`) added, immediately followed by text in the same blue explicitly stating every problem (no corrections, final verdict, no separate file created)
-- Discrepancy severities follow the table in `SKILL.md`
+- The same `_Graded.docx` / `_Graded.xlsx`, now carrying `Review Passed`, or `Review FAILED` plus every problem, in blue.
+- Final message: the verdict, the discrepancy list (if any), or a `RUBRIC CONCERN` (in which case the file was not marked).
+- Severities follow the table in `SKILL.md`.
 
 ## Constraints
-- **ONLY write grading output to `graded-submissions/`** — the shared extraction toolkit's cache under `.cache/` is the one exception (see below)
-- **Never create intermediate/temp files (e.g. helper `.py` scripts, `.json`, `.txt`) outside `.cache/`** — run ad hoc Python inline (`.venv/Scripts/python -c ...` or piped via stdin) or place it under `.cache/inspect/`; independent verdicts and comparisons stay in memory; the only file written under grading output is the same `_Graded.docx`/`_Graded.xlsx` the grader produced. The shared extraction toolkit's cache (`.cache/extraction/`, `.cache/renders/`, `.cache/converted/`, `.cache/inspect/`) is the one intended exception — it's derived, git-ignored, disposable data, not grading output
-- Grade blindly first — form own verdicts before checking grader's work
-- **Use the shared extraction toolkit** (`scripts/extract.py`) — reusing the grader's cached extraction record is expected and required for comparability (see Step 2); independence applies to the verdict you form from that content, not to re-parsing the file
-- **Use BLUE INK TEXT, exact hex `0000FF`** for final marks (not red, and never a different shade of blue) — end of document for .docx, "Grading Summary" tab for .xlsx. Mark wording is pinned exactly too: `Review Passed` / `Review FAILED`, no variants or decoration (no checkmark, no extra words)
-- Single verification pass (no corrections sent back)
-- If verification FAILS: explicitly list all problems in blue text immediately below the "Review FAILED" mark in the graded file — never create a separate report file
-- If unreadable content: mark "unreadable" and compare against grader's handling
-- If ambiguous answers: note as low severity in the discrepancy's notes field, with explanation
-- **Never calculate or write a total score/grade** (e.g. "8/10", "80%", a letter grade, a sum of points) — verify only per-question verdicts; total scoring is left to the human instructor
+- **Only write grading output to `graded-submissions/`**, and there only via `mark_review.py` on the existing graded file. Scratch JSON goes in the submission's `work_dir` under `.cache/`. Ad hoc Python runs inline or under `.cache/inspect/`.
+- Grade blind first. Never open the graded file's annotations, or anything the grader left, before committing `checker_blind.json`.
+- Single verification pass. Nothing is sent back to the grader.
+- If content is unreadable, give that question the verdict `unreadable` and compare against the grader's handling.
+- **Never calculate or write a total score/grade.** Verify only per-question verdicts; scoring is left to the human instructor.

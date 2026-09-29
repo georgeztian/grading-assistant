@@ -8,8 +8,7 @@ Run once per machine with any Python 3 interpreter:
 Stdlib only, so it works before any dependency is installed. Idempotent:
 re-running reuses an existing `.venv/` and just re-syncs `requirements.txt`
 into it. Every other script in `scripts/` — and any ad hoc Python an agent
-writes (e.g. python-docx/openpyxl annotation code) — must then run with the
-venv's interpreter: `.venv/Scripts/python` on Windows, `.venv/bin/python` on
+writes — must then run with the venv's interpreter: `.venv/Scripts/python` on Windows, `.venv/bin/python` on
 macOS/Linux (see `_venv.py`).
 
 Because this project lives in a Dropbox folder, the new `.venv/` is marked

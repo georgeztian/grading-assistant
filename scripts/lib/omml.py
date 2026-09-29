@@ -69,7 +69,8 @@ def linearize_element(el) -> str:
     if tag == "nary":
         nary_pr = _m(el, "naryPr")
         chr_el = _m(nary_pr, "chr") if nary_pr is not None else None
-        symbol = chr_el.get(f"{{{M_NS}}}val") if chr_el is not None else "∑"
+        # Per the OMML spec an n-ary operator with no m:chr is an integral.
+        symbol = chr_el.get(f"{{{M_NS}}}val") if chr_el is not None else "∫"
         sub = _text_of(_m(el, "sub"))
         sup = _text_of(_m(el, "sup"))
         base = _text_of(_m(el, "e"))
@@ -79,12 +80,30 @@ def linearize_element(el) -> str:
         return f"{symbol}{bounds}({base})"
 
     if tag == "d":
-        # delimiter (parentheses/brackets wrapping one or more m:e children)
+        # Delimiter wrapping one or more m:e children. Its characters default
+        # to "(", ")" and "|" but may be brackets, bars, or empty.
+        d_pr = _m(el, "dPr")
+
+        def char(name: str, default: str) -> str:
+            node = _m(d_pr, name) if d_pr is not None else None
+            return node.get(f"{{{M_NS}}}val", "") if node is not None else default
+
         parts = [_text_of(e) for e in _m_all(el, "e")]
-        return "(" + ", ".join(parts) + ")"
+        return char("begChr", "(") + char("sepChr", "|").join(parts) + char("endChr", ")")
+
+    if tag == "eqArr":
+        # A stack of equations (one per m:e) — keep them apart.
+        return "; ".join(_text_of(e) for e in _m_all(el, "e"))
+
+    if tag in ("limLow", "limUpp"):
+        mark = "_" if tag == "limLow" else "^"
+        return f"{_text_of(_m(el, 'e'))}{mark}{{{_text_of(_m(el, 'lim'))}}}"
 
     if tag in ("num", "den", "e", "sub", "sup", "deg", "lim"):
         return "".join(linearize_element(c) for c in el)
+
+    if tag.endswith("Pr"):  # property elements (dPr, fPr, ctrlPr, …) hold no text
+        return ""
 
     # Fallback: containers (oMath, oMathPara, acc, groupChr, m, ...) — just
     # concatenate whatever text/known children they hold, in document order.

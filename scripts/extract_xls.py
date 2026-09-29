@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 """Extract every tab of a legacy .xls workbook (cached values only).
 
+Fallback only: extract.py normally converts .xls to .xlsx (Microsoft Excel
+or LibreOffice, see convert_doc.py) and reads it with extract_xlsx.py, which
+keeps formulas and images. This values-only reader is used when no converter
+is installed, and its record is marked `degraded` so it is replaced once one
+is.
+
 openpyxl cannot open .xls at all, so this uses xlrd (pinned <2.0, since 2.0+
-dropped .xls support — see grader.md "Spreadsheet Extraction"). xlrd only
+dropped .xls support — see .claude/skills/grading-instructions/extraction-fallback.md). xlrd only
 exposes the last-cached value, never the formula text, so every record is
 flagged `formula_available: false` rather than silently treating a computed
 answer as a plain literal.
 
 Usage:
     .venv/Scripts/python scripts/extract_xls.py <file.xls>
-    .venv/Scripts/python scripts/extract_xls.py <file.xls> --cache
 """
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from pathlib import Path
@@ -23,7 +27,6 @@ import _venv  # noqa: F401  — must precede third-party imports (re-runs under 
 import xlrd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib import cache  # noqa: E402
 from lib.xls_drawings import detect_xls_drawings  # noqa: E402
 
 VISIBILITY = {0: "visible", 1: "hidden", 2: "very_hidden"}
@@ -58,7 +61,7 @@ def extract_xls(path: Path) -> dict:
         for r in range(sheet.nrows):
             for c in range(sheet.ncols):
                 cell = sheet.cell(r, c)
-                if cell.ctype == xlrd.XL_CELL_EMPTY:
+                if cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):  # BLANK = formatting only
                     continue
                 value = cell.value
                 if cell.ctype == xlrd.XL_CELL_DATE:
@@ -66,13 +69,15 @@ def extract_xls(path: Path) -> dict:
                         value = xlrd.xldate_as_datetime(value, book.datemode).isoformat()
                     except Exception:
                         pass
-                coord = f"{xlrd.colname(c)}{r + 1}"
-                cells[coord] = {"value": value, "formula_available": False}
+                elif cell.ctype == xlrd.XL_CELL_BOOLEAN:
+                    value = bool(value)
+                elif cell.ctype == xlrd.XL_CELL_ERROR:
+                    value = xlrd.error_text_from_code.get(value, "#ERROR")
+                cells[f"{xlrd.colname(c)}{r + 1}"] = {"value": value}
 
         # Attach comments — including ones on otherwise-empty cells.
         for (r, c), text in notes.items():
-            coord = f"{xlrd.colname(c)}{r + 1}"
-            cells.setdefault(coord, {"formula_available": False})["comment"] = text
+            cells.setdefault(f"{xlrd.colname(c)}{r + 1}", {})["comment"] = text
         cells_with_comment += len(notes)
 
         sheets[sheet.name] = {
@@ -98,11 +103,9 @@ def extract_xls(path: Path) -> dict:
             "heuristic byte scan — not an exact image count, may include "
             "non-image objects like comments/buttons, and xlrd cannot "
             "extract or render any of it). Their content is NOT in this "
-            "extraction. If a question depends on a figure/chart/pasted "
-            "image, inspect it directly — e.g. convert the file to .xlsx "
-            "with LibreOffice (`soffice --headless --convert-to xlsx "
-            "--outdir .cache/converted <file.xls>`) and re-run "
-            "extract_xlsx.py on the result, which can read and count images."
+            "extraction and cannot be viewed without a converter — report "
+            "it, since installing Microsoft Excel or LibreOffice makes the "
+            "images (and formulas) available."
         )
     elif not drawings.get("supported"):
         warnings.append(
@@ -111,6 +114,7 @@ def extract_xls(path: Path) -> dict:
 
     return {
         "type": "xls",
+        "formula_available": False,
         "sheet_order": book.sheet_names(),
         "sheets": sheets,
         "drawings": drawings,
@@ -127,38 +131,10 @@ def extract_xls(path: Path) -> dict:
 
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
-    parser = argparse.ArgumentParser(description=__doc__,
-                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("file", type=Path)
-    parser.add_argument("--cache", action="store_true")
-    parser.add_argument("--force", action="store_true")
-    args = parser.parse_args()
-
-    if not args.file.exists():
-        print(json.dumps({"error": f"file not found: {args.file}"}))
+    if len(sys.argv) != 2 or not Path(sys.argv[1]).exists():
+        print(json.dumps({"error": "usage: extract_xls.py <existing file.xls>"}))
         sys.exit(1)
-
-    if args.cache and not args.force:
-        cached = cache.load_cached(args.file)
-        if cached is not None:
-            print(json.dumps({
-                "cache_hit": True,
-                "cache_path": str(cache.cache_path_for(args.file)),
-                "summary": cached.get("summary"),
-            }, indent=2))
-            return
-
-    record = extract_xls(args.file)
-
-    if args.cache:
-        cache_file = cache.save_cache(args.file, record)
-        print(json.dumps({
-            "cache_hit": False,
-            "cache_path": str(cache_file),
-            "summary": record["summary"],
-        }, indent=2))
-    else:
-        print(json.dumps(record, indent=2, ensure_ascii=False))
+    print(json.dumps(extract_xls(Path(sys.argv[1])), indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":

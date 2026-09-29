@@ -6,3 +6,4 @@ lxml
 PyMuPDF
 xlrd<2.0
 olefile
+pywin32; sys_platform == "win32"

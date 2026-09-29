@@ -5,67 +5,136 @@ description: grading instructions to grade students' homework submissions
 
 # Concurrent Grading Workflow
 
-Orchestrates parallel **grader agent** (red annotations for incorrect/incomplete only) + **independent checker agent** (single-pass verification, no corrections).
+Orchestrates the whole run:
+- a **verified answer key (rubric)**, built once per solutions file;
+- parallel **grader agents**, which annotate only incorrect/incomplete answers, in red;
+- independent **checker agents**, which do a single verification pass with no corrections, in blue.
 
-**Key Requirements**: 
-- **Only edit files in `graded-submissions/`** (the shared extraction cache under `.cache/` is the one exception — see below)
-- Content extraction for ALL content (text, equations, pictures, special symbols, formatting, spreadsheet tabs/formulas) via the shared extraction toolkit in `scripts/`
-- Supports .doc, .docx, .pdf, .xlsx, and .xls, for both submissions and solutions
-- Single verification pass (no correction loops)
-- **No scoring**: neither agent calculates or writes a total score/grade (e.g. "8/10", "80%", a letter grade) — only per-question verdicts and explanations; scoring is left to the human instructor
+**Key Requirements**:
+- **Only edit files in `graded-submissions/`.** The shared cache under `.cache/` (extraction, rubrics, per-file work dirs) is the one exception; it is derived, git-ignored data.
+- All content extraction goes through the shared toolkit in `scripts/`. Agents read its compact **views**, not raw JSON.
+- Supports .doc, .docx, .pdf, .xlsx and .xls, for both submissions and solutions.
+- Single verification pass (no correction loops) for grading.
+- **No scoring**: no agent calculates or writes a total score/grade (e.g. "8/10", "80%", a letter grade). Agents give only per-question verdicts and explanations; scoring is left to the human instructor.
 
-**Prerequisite (once per machine)**: if `.venv/` doesn't exist, run `python scripts/setup_env.py` — creates the project's private Python environment in `.venv/` (git-ignored, excluded from Dropbox sync) and installs `python-docx`, `pypdf`, `openpyxl`, `Pillow` (openpyxl needs it to see — and, when saving `_Graded.xlsx`, keep — embedded images), `lxml`, `PyMuPDF`, `xlrd<2.0`, `olefile`. `.doc` conversion additionally needs LibreOffice (on PATH or in its standard install location; `pandoc` can't read `.doc`).
+**Prerequisite (once per machine)**:
+- If `.venv/` doesn't exist, run `python scripts/setup_env.py`. It creates the private environment and installs `requirements.txt`.
+- `.doc` and `.xls` files are converted to `.docx` / `.xlsx` by Microsoft Word/Excel (Windows, via COM) or LibreOffice, whichever is installed.
+- From then on, all Python runs with `.venv/Scripts/python` (Windows; `.venv/bin/python` on macOS/Linux), never a bare `python`/`pip`. Include this rule in every agent prompt.
 
-**Private Python environment**: all Python in this project runs with the project venv's interpreter — `.venv/Scripts/python` on Windows (`.venv/bin/python` on macOS/Linux) — never a bare `python`/`pip`. That covers the `scripts/` toolkit *and* any ad hoc Python an agent writes itself (e.g. python-docx/openpyxl code that writes annotations). If `.venv/` doesn't exist yet, create it once with `python scripts/setup_env.py` before anything else. Include this rule in every grader/checker prompt.
+**What the toolkit does for every agent** (details in `scripts/README.md`):
+- `extract.py <file>`: cached by content hash, so a file is extracted once no matter how many agents read it. It prints:
+  - `view_path`: a compact one-line-per-paragraph/cell view whose ids are the annotation anchors. Images are exported with their paths; charts, text boxes and vector PDF graphics are shown or flagged.
+  - `work_dir`: that file's own scratch folder (per file path, so identical submissions never share one)
+  A `.pdf` is rebuilt once, in code, as the `.docx` its graded copy is written from.
+- `rubric.py`: the per-solutions-file answer key, and its gate. It serves the rubric only while it is verified, unchanged and not on hold. It also handles `hold`/`release` for solution concerns, and `graded` lists graded files made with an older answer key.
+- `compare_xlsx.py`: a deterministic numeric pre-check for workbooks. It uses the rubric's tolerances and labels rounding, percent-scale and layout-shift cases.
+- `annotate.py` / `mark_review.py`: write the grader's and checker's marks with the pinned colors and wording. Agents never hand-write python-docx/openpyxl code for this. `annotate.py` also records in the graded file which answer key it used, and tags each annotation with its question.
+- `audit_graded.py`: the mechanical half of the checker's audit, run in two steps:
+  - a status check first;
+  - after the checker commits its blind verdicts, the report: the grader's verdicts per question, an automatic comparison with the checker's, and every mechanical problem (mark, placement, colors, highlights, altered content, outdated answer key).
+- `.claude/skills/grading-instructions/extraction-fallback.md`: manual extraction and image-inspection methods. Agents open it only when a view is wrong or flags content outside the text.
 
-**Shared extraction toolkit** (`scripts/`, documented in `scripts/README.md`): both agents run `.venv/Scripts/python scripts/extract.py <file>` instead of writing ad hoc parsing code (caching is automatic — no flag needed). It implements the exact methods `grader.md`'s "Equation Extraction" and "Spreadsheet Extraction" sections describe (Word OMML equation walking, dual formula/cached-value spreadsheet loads reading every tab, `.doc` conversion, PDF equation-region flagging) and caches the result by file content hash under `.cache/extraction/`. Since grader and checker are already required to use the identical method for comparable results, this means:
-- A solutions file shared by N students is extracted **once**, not once per student per agent.
-- The checker's independent verdict still comes from its own judgment — it just reads the grader's cached extraction record instead of re-parsing the file from scratch (see `grading-checker.md` Step 2).
-- For spreadsheets, `.venv/Scripts/python scripts/compare_xlsx.py <submission> <solutions>` adds a deterministic pre-check for purely numeric answer cells (`auto_correct`/`auto_incorrect`/`missing_answer`), so neither agent spends LLM reasoning re-deriving arithmetic that Python can verify exactly. Every other cell — text, conceptual, formula-as-answer (`needs_review`), or on a solution tab the submission lacks (`sheet_missing_in_submission`) — still requires the agent's own judgment, and both agents still write every explanation themselves.
-- Fall back to the manual method in `grader.md` only for a file the script can't handle well.
+**Annotation convention** (applied by `annotate.py`; full rules in `grader.md`):
+- Documents: red feedback text immediately below the wrong answer.
+- Workbooks: the wrong cell highlighted in Excel's "Bad" style (`FFC7CE` fill / `9C0006` font), plus a red explanation in the closest empty cell.
+- **Colors and mark wording are pinned exactly**: grader red `FF0000` (annotations and the `Grading Completed` mark), checker blue `0000FF` (`Review Passed` / `Review FAILED` and discrepancy text), with no variants or decoration.
 
-**Annotation convention**: documents get red feedback text immediately below the wrong answer; spreadsheets get two markers instead — the wrong cell itself highlighted in Excel's "Bad" style (light red fill/dark red font) plus a red explanation in the closest empty cell to it. Full placement rules are in `grader.md` Step 3/4. **Colors and mark wording are pinned exactly, never left to an individual agent run's discretion**: grader red is always hex `FF0000` (annotations and the `Grading Completed` mark), checker blue is always hex `0000FF` (`Review Passed`/`Review FAILED` and any discrepancy text), and the mark text itself is always that exact wording with no variants or decoration (no checkmarks, no reworded phrasing) — see `grader.md` Step 4 and `grading-checker.md` Step 4/5.
-
-**Conceptual/explanation questions**: for written-sentence answers, grading isn't just right/wrong — the grader must check the student's answer against every key word/point the solution relies on and name any that are missing, even if the answer otherwise sounds reasonable. Full method is in `grader.md`'s "Conceptual/Explanation/Interpretation Questions" section; grader and checker must use the same method.
+**Conceptual/explanation questions**: the rubric lists every key point each answer must cover. Graders and checkers check a student's answer against every one and name each missing point. Everyone uses the same list, so verdicts are consistent across students.
 
 ## Step 0: Discover Submissions & Match Solutions (before invoking any agent)
 
-`student-submissions/` and `reference-solutions/` may each be flat, or organized into per-homework subfolders (e.g. `HW1/`, `HW2/`) — not always, and not always the same way on both sides. Before invoking the grader for any submission, resolve which solutions file grades it:
+`student-submissions/` and `reference-solutions/` may each be flat, or organized into per-homework subfolders (e.g. `HW1/`, `HW2/`). They aren't always organized, and not always the same way on both sides. Before invoking anything for a submission, resolve which solutions file grades it:
 
-- **Flat submission** (sits directly in `student-submissions/`): pair it with the solutions file that sits directly in `reference-solutions/`.
-  - **If more than one flat solutions file exists**, filename alone won't tell you which one applies (they aren't required to match) — open each candidate and match by subject matter (title/case name, file type, worksheet tab names, etc.). Only proceed once one candidate is clearly the same assignment; if two or more still look equally plausible, stop and ask the user to confirm.
-- **Subfoldered submission** (sits in `student-submissions/<X>/`): pair it with the solutions file(s) in `reference-solutions/<X>/` — **the subfolder name must match exactly**. A submission in `HW1/` does not match a solutions folder named `Homework 1/` or `hw1_solutions/`.
-- **Mixed layouts** (some submissions flat, others in subfolders, at the same time) are expected — resolve each submission independently by the same rule.
-- **No confident match found** (no exact-name subfolder, or no flat solutions file clearly matches by content): do NOT guess which solutions file applies — stop and ask the user to confirm or provide the correct solutions file before grading anything in it.
-- **Output mirrors the input structure**: a submission at `student-submissions/HW1/name.docx` outputs to `graded-submissions/HW1/name_Graded.docx` (create the subfolder if it doesn't exist yet); a flat submission continues to output directly into `graded-submissions/`.
+- **Flat submission** (directly in `student-submissions/`): pair it with the solutions file directly in `reference-solutions/`.
+  - **If more than one flat solutions file exists**, filename alone won't tell you which applies. Open each candidate and match by subject matter (title/case name, file type, worksheet tab names, etc.). Proceed only once one candidate is clearly the same assignment. If two or more still look equally plausible, stop and ask the user.
+- **Subfoldered submission** (in `student-submissions/<X>/`): pair it with the solutions file(s) in `reference-solutions/<X>/`. **The subfolder name must match exactly.** `HW1/` does not match `Homework 1/` or `hw1_solutions/`.
+- **Mixed layouts** are expected. Resolve each submission independently by the same rule.
+- **No confident match**: do NOT guess. Stop and ask the user to confirm or provide the correct solutions file before grading anything in it.
+- **Output mirrors the input structure**:
+  - `student-submissions/HW1/name.docx` → `graded-submissions/HW1/name_Graded.docx` (create the subfolder if needed)
+  - flat submissions → directly into `graded-submissions/`
+
+## Step 1: Answer Key (once per solutions file, before any grader starts)
+
+For each distinct solutions file matched in Step 0:
+
+1. Run `.venv/Scripts/python scripts/rubric.py status <solutions_file>`.
+   - **`verified`**: reuse it (e.g. from an earlier batch) and go straight to grading.
+   - **`new`** or **`stale`** (the map or rubric changed after approval): start the loop below at step 2 (build).
+   - **`unverified`** (built, never reviewed — e.g. an interrupted run): start at step 3 (verify).
+   - **`rejected`**: start at step 4 (correct), using the `last_issues` path that `status` prints.
+   - **`on_hold`**: a solution concern is waiting for the user — go to **Holds** below.
+2. **Build**: invoke the **rubric-builder** agent with `solutions_file`. It writes the question→content map and runs `rubric.py build`, which copies the solution **verbatim**.
+3. **Verify**: invoke a **fresh rubric-checker** agent with `solutions_file`. This must be a new instance, never the builder. It compares the rubric against the raw solutions and then does one of:
+   - `rubric.py approve <review.json>`: needs its per-question review record;
+   - `rubric.py reject <issues.json>`;
+   - `rubric.py hold <concerns.json> <review.json>`: the rubric is faithful, but the official solution looks wrong.
+4. **If rejected, the issues must be corrected before any grading.** Invoke the rubric-builder again with `solutions_file` and the `issues_path` that `reject` printed. It fixes the map and rebuilds. Then go back to step 3 with another fresh rubric-checker.
+5. **Round limit**: when `reject` prints `escalate_to_user: true` (3 rejected rounds), stop. Show the user the latest issues and ask how to proceed. Don't grade that homework until the rubric is verified.
+
+**Gate:** never launch a grader or checker for a homework until `rubric.py path <solutions_file>` succeeds. The graders and checkers enforce this too, refusing to grade against an unverified, stale or held rubric.
+
+Rubrics for different homeworks can be built and verified in parallel (at most 10 concurrent agents per type).
+
+### Holds: a concern about the official solution pauses that homework
+A concern comes either from the rubric-checker's `hold`, or from a grader or checker that stopped and reported `RUBRIC CONCERN`.
+1. If a grader or checker raised it, write their concern(s) to `concerns.json` in the rubric directory (`{"concerns": [{"question", "detail", "source"}]}`) and run `rubric.py hold <solutions_file> <concerns.json>`. This stops every other grader and checker from starting on that homework. If the rubric is already on hold, the same command adds the new concern(s) to the outstanding ones (`status` shows the file as `last_concerns`).
+2. Launch no more agents for that homework, and let running ones finish.
+3. Show the user each concern and ask for a decision:
+   - **The solution stands as written** → `rubric.py release <solutions_file> --note "<the user's decision>"`. Resume grading.
+   - **The solution is wrong / another answer is also acceptable** → the user corrects the solutions file (it then gets a new rubric, from Step 1), or the rubric-builder records the user's ruling in `grading_notes` and rebuilds. Either way a fresh rubric-checker re-verifies before grading resumes.
+
+### After any answer-key change: find outdated grading
+Every graded file records which verified rubric it was graded against. Whenever a rubric is rebuilt after grading has begun, and always before your final summary, run `rubric.py graded <solutions_file> <graded folder>` for each homework.
+- **`outdated`** files were graded against an older answer key, or against an earlier version of a solutions file that has since been corrected in place. Regrade them: delete the old graded file and run the grader again.
+- If an outdated file already carries a checker review, ask the user first, since deleting it discards that review.
+- **`no_record`** files were made outside this workflow; tell the user.
 
 ## Concurrent Workflow Overview
 
-Both agents work independently on different files:
-- **Grader**: processes submission queue, one at a time
-- **Checker**: processes submissions with "Grading Completed" mark, one at a time
-- Agents can be invoked concurrently (in separate processes/sessions), capped at 10 concurrent instances per agent type — up to 10 graders and up to 10 checkers may run at the same time, but never more than 10 of either type simultaneously. With more than 10 submissions in the queue, launch the first 10 graders, then launch the next as each earlier one finishes (same pattern for checkers).
+Both agent types work independently on different files:
+- **Grader**: processes the submission queue, one submission per agent invocation.
+- **Checker**: processes submissions that have their "Grading Completed" mark, one per agent invocation.
+- Graders and checkers may run concurrently, capped at **10 concurrent instances per agent type**: up to 10 graders and up to 10 checkers at once, never more than 10 of either. With more than 10 submissions queued, launch the first 10, then launch the next as each earlier one finishes. The same pattern applies to checkers.
 
 ## Grader: Grade Submission
 
-**Invoke** for each submission, passing `submission_file`, the matched `solutions_file` (per Step 0), and `output_dir` — `graded-submissions/`, or its matching homework subfolder if the submission was subfoldered. Full process, extraction requirements, and output format are defined in `grader.md` — grading is final, no correction mode.
+**Invoke** for each submission with:
+- `submission_file`
+- the matched `solutions_file` (Step 0)
+- `output_dir`: `graded-submissions/`, or its matching homework subfolder
+
+The process is in `grader.md`. Grading is final; there is no correction mode. If the grader reports the submission **unreadable**, no graded file is created. Tell the user which file and why, including any image-content note. Also pass on any `DEGRADED` `.xls` report (graded from values only because no Excel/LibreOffice converter was available).
 
 ## Checker: Single-Pass Verification
 
-**Invoke** once a submission has its "Grading Completed" mark, passing `submission_file`, `graded_file` (the `_Graded.docx`/`_Graded.xlsx` in `graded-submissions/`), and `solutions_file`. Full process is defined in `grading-checker.md` — grades independently first, then compares against the grader's annotations.
+**Invoke** once a submission has its "Grading Completed" mark, with:
+- `submission_file`
+- `graded_file` (the `_Graded.docx` / `_Graded.xlsx`)
+- `solutions_file`
 
-**Final verdict** (single pass — never sent back to the grader for correction):
-- **`Review Passed`** (blue mark, hex `0000FF`, exact text): grading complete and verified ✓
-- **`Review FAILED`** (blue mark, hex `0000FF`, exact text), immediately followed by text in the same blue in the same graded file explicitly stating every problem (no separate file): user reviews manually and decides next steps
+The process is in `grading-checker.md`:
+- grade blind against the same rubric;
+- commit those verdicts to a file;
+- only then produce the audit report and compare against the grader's annotations.
+The scripts enforce that order, and `mark_review.py` won't mark a file without the blind audit. If a checker reports `RUBRIC CONCERN`, handle it as a hold (above).
+
+**Final verdict** (single pass — never sent back to the grader):
+- **`Review Passed`** (blue `0000FF`, exact text): grading complete and verified ✓
+- **`Review FAILED`** (blue `0000FF`, exact text), immediately followed, in the same graded file, by blue text stating every problem (no separate file): the user reviews manually and decides next steps.
 
 ### Discrepancy Types & Severity
 
 | Type | Meaning | Severity |
 |------|---------|----------|
-| `verdict_mismatch` | Grader/checker disagree on correct/incorrect | high |
+| `verdict_mismatch` | Grader/checker disagree on correct vs. not correct | high |
+| `outdated_rubric` | The file was graded against an answer key that is no longer the verified one (or an earlier version of the solutions file) | high |
 | `missed_question` | Grader skipped a question | high |
-| `annotation_placement` | Feedback not immediately below answer | medium |
+| `annotation_placement` | Feedback not immediately below its answer (docx) / not the closest empty visible cell (xlsx) | medium |
 | `explanation_error` | Explanation unclear/incomplete/wrong | medium |
 | `incomplete_coverage` | Multi-part question not fully addressed | medium |
-| `cell_highlight_missing` | (.xlsx) Incorrect/incomplete cell not highlighted red, or a correct cell wrongly highlighted | medium |
-| `missing_keypoint_not_flagged` | Grader missed a key word/point absent from a conceptual answer, or flagged one that's actually present | medium |
+| `cell_highlight_missing` | (.xlsx) Incorrect/incomplete cell not highlighted, or a correct cell wrongly highlighted | medium |
+| `missing_keypoint_not_flagged` | Grader missed a key point absent from a conceptual answer, or flagged one that's actually present | medium |
+| `format_error` | Wrong color/mark wording, original student content altered, or a missing grading record/question tag | medium |
+| `label_mismatch` | Both say "wrong", but one says INCORRECT and the other INCOMPLETE | low |
