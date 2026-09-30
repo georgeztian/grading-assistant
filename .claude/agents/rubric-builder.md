@@ -35,11 +35,21 @@ Write `map_path` (`map.json`, with the Write tool):
      "answer_type": "multiple_choice", "final_answer": "C ($300.29)"},
     {"id": "Q7", "title": "Why do merchants accept BNPL?", "blocks": ["p90-p97"],
      "answer_type": "conceptual",
-     "key_points": ["BNPL raises conversion / average order value", "the merchant, not the shopper, pays the BNPL fee", "BNPL provider bears the credit risk"]},
-    {"id": "WACC-market", "blocks": ["Ex TN5 WACC!G10:L15"], "answer_type": "numeric",
-     "final_answer": "WACC (market values) = 6.17%", "tolerance": "±0.01 percentage points"}
+     "key_points": ["BNPL raises conversion / average order value", "the merchant, not the shopper, pays the BNPL fee", "BNPL provider bears the credit risk"]}
   ],
   "excluded_blocks": [{"blocks": ["p120-p122"], "reason": "page footer / copyright notice"}]
+}
+```
+A workbook's map (see **Workbooks** below):
+```json
+{
+  "questions": [
+    {"id": "WACC-market", "title": "WACC using market values", "blocks": ["Ex TN5 WACC!A9:M15"],
+     "answer_type": "numeric", "numeric_tolerance": {"abs": 0.0001}}
+  ],
+  "ungraded_blocks": [{"blocks": ["Ex TN5 WACC!M15", "Ex TN5 WACC!G20:G21"],
+                       "reason": "instructor's notes, not something students are asked to write"}],
+  "excluded_blocks": [{"blocks": ["Copyright!*"], "reason": "cover page"}]
 }
 ```
 - **Block specs:**
@@ -51,17 +61,23 @@ Write `map_path` (`map.json`, with the Write tool):
 - **`shared_blocks`**: content that applies to many questions, such as case background, data tables used throughout, instructions and assumptions.
 - **`excluded_blocks`**: only true non-answer content (headers, footers, copyright notices, point values that are already shown elsewhere), each with a `reason`. When unsure, assign rather than exclude.
 - Content may belong to more than one question when it genuinely serves several. The script warns about this, and that's fine when deliberate.
+- **Workbooks are graded cell by cell**, not question by question (`compare_xlsx.py`). So a workbook's map is a cell-level answer key:
+  - **Sections:** a workbook `question` is a section (an exhibit or table) that groups its cells for readability, tolerances and notes. Every cell in a section **is graded**: a formula by its formula, a typed value by its value, an empty student cell as INCOMPLETE.
+  - **`ungraded_blocks`** (workbooks only), each with a `reason`: list every solution cell a student is **not asked to produce**. That means instructor notes and comments, remarks on the solution's own choices, and headings or labels. Such cells stay in their section as context, marked `(not graded)`, and no grader judges them. Cells a student must produce stay graded: numbers, formulas, given inputs typed from the case, and written answers. When unsure, keep a cell graded and say so in your final message.
+  - **No `final_answer`**: the verbatim cells (`G12: =C12*E12 -> 72019.55`) are the answer key, cell by cell. The build refuses a restated answer for a workbook.
+  - **Tolerance only as `numeric_tolerance`**, the one tolerance `compare_xlsx.py` applies. The build refuses a free-text `tolerance` without it.
+  - `key_points` still apply to a section whose cells hold written answers (answer type `conceptual`).
 - **Additions** (optional unless stated). They must be faithful to the solution and never invent anything it doesn't say:
-  - `final_answer`: the final answer restated in one line, exactly as the solution gives it (value and units/choice). It's a convenience; the verbatim text stays authoritative.
+  - `final_answer` (documents only): the final answer restated in one line, exactly as the solution gives it (value and units/choice). It's a convenience; the verbatim text stays authoritative.
   - `key_points` (**required for conceptual questions**): read the solution's explanation and break it into the distinct concepts, terms and reasoning steps a complete answer must cover. Do this whether the solution states them as a list or as prose. Each point must be traceable to the solution's own text: don't add points it doesn't make, and don't merge two distinct points into one. Graders mark an answer INCOMPLETE and name each missing point from this list, so it must be complete and exact.
-  - `tolerance`: only where the solution states or clearly implies rounding (e.g. an answer given to 2 decimals). Free text, for graders.
-  - `numeric_tolerance`: the same, machine-readable, for spreadsheet questions: `{"abs": 0.005}` or `{"rel": 0.001}`. `compare_xlsx.py` applies it to that question's cells, so a student who rounds the way the solution does isn't flagged `auto_incorrect`.
+  - `tolerance` (documents): only where the solution states or clearly implies rounding (e.g. an answer given to 2 decimals). Free text, for graders.
+  - `numeric_tolerance` (workbooks): the same, machine-readable: `{"abs": 0.005}` or `{"rel": 0.001}`. `compare_xlsx.py` applies it to that section's cells, so a student who rounds the way the solution does isn't marked wrong.
   - `image_notes`: a faithful description of solution content that exists only in an image, equation render or chart (values, labels, what it shows), plus where to view it.
   - `grading_notes`: only alternatives or acceptance rules **the solution itself states** (e.g. "either method accepted").
 
 ### Step 3: Build
 - Run `.venv/Scripts/python scripts/rubric.py build <solutions_file>`.
-- If it reports `invalid`, fix every listed error in `map.json` and rebuild. Typical errors: uncovered content, unknown ids, backwards ranges, a conceptual question without key points.
+- If it reports `invalid`, fix every listed error in `map.json` and rebuild. Typical errors: uncovered content, unknown ids, backwards ranges, a conceptual question without key points, and for a workbook a `final_answer` or a tolerance given only as text.
 - When it reports `built`, Read the resulting `rubric.md` once to confirm each question's section reads as a complete solution.
 - **Never edit `rubric.md` by hand**, and **never run `rubric.py approve` or `reject`**. Those belong to the rubric-checker.
 

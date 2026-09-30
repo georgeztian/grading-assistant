@@ -156,14 +156,21 @@ formatting and images all survive. With neither:
     grading notes.
   - `build` validates the map, **refusing any map that leaves a non-empty
     block of the solutions unassigned** (to a question, to shared context,
-    or excluded with a reason). It then writes `rubric.md` with the solution
-    content copied verbatim (tolerances, including `numeric_tolerance`, are
-    shown on each question's header line, so the rubric-checker sees them).
+    or excluded with a reason).
+    - A workbook map is a cell-level key, since workbooks are graded cell by
+      cell. Its sections take no `final_answer`, and its tolerances must be
+      `numeric_tolerance`.
+    - `ungraded_blocks` (workbooks only, each with a reason) lists the notes
+      and labels students aren't asked to produce. They stay in their
+      section, marked `(not graded)`, and `compare_xlsx.py` skips them.
+    - It then writes `rubric.md` with the solution content copied verbatim
+      (tolerances, including `numeric_tolerance`, are shown on each
+      question's header line, so the rubric-checker sees them).
   - The status moves `new → unverified → verified | rejected | on_hold`:
     - `approve <review.json>` (by an independent rubric-checker) makes it
       `verified`. It refuses a review record that doesn't cover every
       question with every applicable check passed, or that predates the
-      build.
+      build. A workbook's review must also confirm `grading_scope_ok`.
     - `reject <issues.json>` stores the issues for the builder's correction
       round. After 3 rejected rounds it reports `escalate_to_user`.
     - `hold <concerns.json> [<review.json>]` pauses a homework over a
@@ -184,44 +191,80 @@ formatting and images all survive. With neither:
     if any, so outdated grading is found after a key changes.
 
 ### Grading output
-- **`compare_xlsx.py <submission> <solutions> [--json]`** is a
-  deterministic numeric pre-check for workbooks. It classifies each
-  solution cell as:
-  - `auto_correct` / `auto_incorrect` / `missing_answer`: bare-number
-    answers, compared with the rubric's `numeric_tolerance` for that
-    question when set, otherwise `--tolerance`;
-  - `text_match`: identical text;
-  - `needs_review`: everything else;
-  - `sheet_missing_in_submission`: a whole solution tab is missing.
-  Hints:
-  - `auto_incorrect` cells are labelled `rounded` or `percent_scale` when
-    that is all that differs;
-  - they get `likely_downstream_of` when their formula reads another flagged
-    cell (directly or through a range);
-  - they get `found_at` when the solution value sits elsewhere on the
-    student's sheet;
-  - many values found at the same offset produce a sheet-level
-    `PROBABLE LAYOUT SHIFT`.
-  Output is compact by default; `--json` gives the full per-cell output.
-  These are hints only: agents still judge every non-automatic cell and
-  write every explanation.
+- **`compare_xlsx.py <submission> <solutions> [--json]`** grades a workbook
+  **cell by cell** by one rule, in code. For every solution cell (except the
+  rubric's `excluded_blocks` and `ungraded_blocks`):
+  - **A cell with a formula is judged by its formula.** The student's formula
+    is re-run on the solution's (correct) inputs by `lib/formula_eval.py`:
+    - it gives the solution's value, and the cell shows it: `correct`;
+    - it gives the solution's value, but the displayed number differs:
+      `carried_over`. An upstream error flowed in, the cell names it in
+      `carried_from`, and it is **never marked**;
+    - otherwise: `formula_incorrect`, marked INCORRECT.
+  - **A typed value (no formula)** is `correct` or `value_incorrect`
+    (INCORRECT).
+  - **An empty cell** where the solution has a number or formula is
+    `missing_answer` (INCOMPLETE).
+  - **Everything code can't decide** is `needs_review`, judged by the agent:
+    - text that differs from the solution's;
+    - solution text where the student's cell is empty (an answer, or only a
+      label or note?);
+    - a formula the evaluator can't run;
+    - a number typed as text;
+    - on a sheet with a `PROBABLE LAYOUT SHIFT`, every cell it would
+      otherwise mark or call `carried_over`;
+    - wrong values in a DEGRADED `.xls` (no formulas).
+    A missing tab is `sheet_missing_in_submission`.
+
+  Numbers compare with the rubric's `numeric_tolerance` for the cell's
+  question when set, otherwise `--tolerance` (relative, default 1e-4). Hints:
+  `rounded`, `percent_scale`, `found_at`. Output is compact by default, as
+  MARK / DO NOT MARK / JUDGE lists plus the correct cells. `--json` gives the
+  full per-cell record (each with its rubric `question`). Without a usable
+  (verified, current, not on hold) answer key it says so on its first line
+  (`rubric_error` in `--json`): no tolerances or not-graded cells are
+  applied, and nobody may grade until the key is verified.
+- **`lib/formula_eval.py`** evaluates one Excel formula with chosen cell
+  values, built on openpyxl's formula tokenizer.
+  - Supported: arithmetic, comparison and `&` operators; cross-sheet
+    references and ranges; the common math, statistics, logical and
+    financial functions (SUM … AVERAGE, ROUND*, IF/IFERROR/AND/OR, PV, FV,
+    PMT, NPER, RATE, NPV, IRR, STDEV/VAR/COVARIANCE/CORREL/SLOPE/INTERCEPT,
+    SUMPRODUCT, …).
+  - Anything else (named ranges, array constants, whole-column references,
+    references to other workbooks or to a sheet neither workbook has, other
+    functions) raises `Unsupported`, and the cell becomes `needs_review`.
+  - It reproduces Excel's cached results on every formula in the project's
+    workbooks.
 - **`annotate.py <submission> <verdicts.json> <output_dir> --solutions <solutions> [--overwrite]`**
   writes `[name]_Graded.docx|xlsx` from the grader's verdicts.
   - It needs the verified rubric, and every annotation's `question` must be
-    one of its ids.
+    one of its ids. For a workbook cell `question` may be omitted; the cell's
+    rubric question is recorded.
   - Documents: red `FF0000` paragraphs immediately below their `pN` / `tN` /
     `sN` anchor (or inside a `tN:rRcC` table cell), then the exact
     `Grading Completed` mark.
-  - Workbooks: the answer cell gets the "Bad" style (`FFC7CE` fill /
+  - Workbooks: each annotated cell gets the "Bad" style (`FFC7CE` fill /
     `9C0006` font, value untouched), the red explanation goes into the
     closest empty *visible* cell (right, then below, then outward), and a
-    final "Grading Summary" tab holds the mark. The student's text boxes
+    final "Grading Summary" tab holds the mark. Every annotated cell is
+    reserved first, so one never receives another's explanation, and
+    explanations are placed in row/column order, the order
+    `audit_graded.py` replays. The student's text boxes
     and shapes, which openpyxl drops on save, are put back
     (`lib/xlsx_shapes.py`).
+  - Against a workbook solution it **enforces the cell rule** of
+    `compare_xlsx.py`. It refuses verdicts that:
+    - skip a MARK cell;
+    - give a MARK cell the other label (INCORRECT vs. INCOMPLETE);
+    - annotate a `correct` or `carried_over` cell, or one the answer key
+      leaves out of grading (`(not graded)` or excluded).
+    `needs_review` cells are the grader's call.
   - **Provenance** (`lib/marks.py`): the file records, as custom document
     properties, the solutions file (path and hash) and verified rubric it
-    was graded against. Each annotation carries a hidden tag (a bookmark, or a
-    defined name) naming its rubric question.
+    was graded against, and each annotation's rubric question. Each
+    annotation carries a hidden tag (a bookmark, or a defined name) that
+    links it to that record.
   - `.doc` / `.xls` / `.pdf` are annotated from the same converted or
     rebuilt file their view describes.
   - `verdicts.json` is deleted once the graded file is written, so the
@@ -232,17 +275,21 @@ formatting and images all survive. With neither:
   audits the graded file against the original, in two steps:
   - Without `--report` it shows only the mark status and answer-key
     problems, nothing of the grader's verdicts.
-  - `--report` requires the checker's committed blind verdicts for every
-    rubric question. It then writes `audit.json` (with the blind file's
-    hash) containing:
+  - `--report` requires the checker's committed blind verdicts:
+    - for a document, `{"verdicts": [...]}`, one per rubric question;
+    - for a workbook graded against a workbook solution, `{"cells": [...]}`,
+      every cell the checker would mark.
+    It then writes `audit.json` (with the blind file's hash) containing:
     - the grader's annotations, each with its question, anchor and the
       answer text it sits under;
-    - `comparison`: per question, checker vs. grader —
-      `agree` / `verdict_mismatch` / `label_mismatch`;
+    - `comparison`: checker vs. grader, per question (document) or per
+      marked cell (workbook) — `agree` / `verdict_mismatch` /
+      `label_mismatch`;
     - `problems`: altered or deleted student content, wrong colour shade, a
       reworded or misplaced mark, a highlight without an annotation, an
       annotation not in the closest empty visible cell, a missing question
-      tag, and `outdated_rubric`.
+      tag, `outdated_rubric`, and, for a workbook, every break of the cell
+      rule (`cell_highlight_missing`).
 - **`mark_review.py <graded> passed | failed <discrepancies.json> --submission <submission>`**
   writes the checker's exact blue `0000FF` `Review Passed` / `Review FAILED`,
   and for a failed review, one line or row per discrepancy plus a summary
@@ -253,7 +300,8 @@ formatting and images all survive. With neither:
     question's `verdict_mismatch` may be listed as `missed_question`), or
     any kind of problem the report lists;
   - a file with no `Grading Completed` mark, or one already reviewed.
-  Verdict discrepancies need `question` and both verdicts; a file-level
+  Verdict discrepancies need `question` (a workbook's: `cell`) and both
+  verdicts; a file-level
   problem (e.g. `outdated_rubric`) may omit them but must explain itself in
   `notes`.
 

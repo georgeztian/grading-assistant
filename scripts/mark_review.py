@@ -23,11 +23,13 @@ discrepancies.json (write it in the submission's work_dir), for `failed`:
          "notes": "..."}
      ],
      "summary": "Grader's verdicts agree with the checker on every question except Q2 ..."}
+  For a workbook graded cell by cell, a verdict disagreement names its
+  `cell` ("Ex TN5 WACC!G12") instead of a question.
   type: one of lib/marks.py DISCREPANCY_TYPES (verdict_mismatch, label_mismatch,
   outdated_rubric, missed_question, annotation_placement, explanation_error,
   incomplete_coverage, cell_highlight_missing, missing_keypoint_not_flagged,
   format_error).
-  question / checker_verdict / grader_verdict are required for
+  question (or cell) / checker_verdict / grader_verdict are required for
   verdict_mismatch, label_mismatch and missed_question; a file-level problem
   (e.g. outdated_rubric) may leave them out but must describe itself in notes.
 
@@ -53,8 +55,9 @@ from openpyxl.styles import Font
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib import cache, marks  # noqa: E402
 from lib.xlsx_shapes import restore_shapes  # noqa: E402
+import annotate  # noqa: E402
 
-FIELDS = ("question", "type", "checker_verdict", "checker_explanation",
+FIELDS = ("question", "cell", "type", "checker_verdict", "checker_explanation",
           "grader_verdict", "grader_explanation", "notes")
 VERDICT_TYPES = ("verdict_mismatch", "label_mismatch", "missed_question")
 
@@ -77,8 +80,11 @@ def load_discrepancies(path: Path) -> tuple[list[dict], str]:
         # A verdict disagreement names both verdicts; a file-level problem
         # (outdated answer key, altered content, …) may have no question or
         # verdicts, but must say what is wrong.
-        required = (("question", "checker_verdict", "grader_verdict")
-                    if d["type"] in VERDICT_TYPES else ())
+        required = (("checker_verdict", "grader_verdict") if d["type"] in VERDICT_TYPES else ())
+        if d["type"] in VERDICT_TYPES and not (str(d.get("question", "")).strip()
+                                               or str(d.get("cell", "")).strip()):
+            raise ReviewError(f"discrepancies[{n}]: 'question' (or, for a workbook cell, 'cell') "
+                              f"is required for {d['type']}")
         for field in required:
             if not str(d.get(field, "")).strip():
                 raise ReviewError(f"discrepancies[{n}]: '{field}' is required for {d['type']}")
@@ -92,7 +98,7 @@ def load_discrepancies(path: Path) -> tuple[list[dict], str]:
 
 
 def discrepancy_line(d: dict) -> str:
-    line = f"{d.get('question') or '(whole file)'} — {d['type']}:"
+    line = f"{d.get('cell') or d.get('question') or '(whole file)'} — {d['type']}:"
     for who in ("checker", "grader"):
         verdict, why = d.get(f"{who}_verdict"), d.get(f"{who}_explanation")
         if verdict or why:
@@ -124,13 +130,16 @@ def check_audit(graded: Path, submission: Path, passed: bool, items: list[dict])
                               f"disagreement(s) and {len(report.get('problems', []))} problem(s) — "
                               "review them and mark 'failed' with each one listed")
         return
-    listed = {(d.get("question"), d.get("type")) for d in items}
-    # A verdict_mismatch where the grader skipped the question may be
-    # reported as missed_question instead.
-    unlisted = [f"{c['question']} ({c['status']})" for c in disagreements
-                if (c["question"], c["status"]) not in listed
+    listed = ({(d.get("question"), d.get("type")) for d in items}
+              | {(annotate.cell_id(d["cell"]), d.get("type")) for d in items
+                 if "!" in str(d.get("cell", ""))})
+    # A comparison row is keyed by question (document) or cell (workbook). A
+    # verdict_mismatch where the grader skipped the question may be reported
+    # as missed_question instead.
+    unlisted = [f"{c.get('question') or c.get('cell')} ({c['status']})" for c in disagreements
+                if (c.get("question") or c.get("cell"), c["status"]) not in listed
                 and not (c["status"] == "verdict_mismatch"
-                         and (c["question"], "missed_question") in listed)]
+                         and (c.get("question") or c.get("cell"), "missed_question") in listed)]
     # Every mechanical problem is a real discrepancy: each kind the audit
     # found must be reported at least once.
     listed_types = {d.get("type") for d in items}

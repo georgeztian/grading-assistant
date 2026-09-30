@@ -7,7 +7,11 @@ The rubric is a *reorganized, complete copy* of the solutions file, not a
 summary. The rubric builder agent writes only a map — which solution content
 (by view id) belongs to which question, plus key points / restated answers —
 and this script copies that content into the rubric **verbatim** from the
-extraction record. The script also refuses any map that leaves a non-empty
+extraction record. A workbook is graded cell by cell (compare_xlsx.py), so its
+map also settles which cells are graded: every cell in a section is, except
+those listed in `ungraded_blocks` (notes and labels students aren't asked to
+produce, kept in the rubric as context). Its sections restate no answers (the
+verbatim cells are the key) and give tolerances machine-readably. The script also refuses any map that leaves a non-empty
 paragraph/table/cell/text box of the solutions file unassigned, so nothing
 can be silently dropped.
 
@@ -65,7 +69,8 @@ REVIEW_CHECKS = ("complete_and_bounded", "restated_answer_ok", "key_points_ok",
                  "tolerance_ok", "image_notes_ok")
 ISSUE_PROBLEMS = ("omission", "misassignment", "wrong_boundary", "key_point_error",
                   "restatement_error", "image_note_error", "exclusion_error",
-                  "answer_type_error", "other")
+                  "grading_scope_error", "answer_type_error", "other")
+WORKBOOK_EXTS = (".xlsx", ".xls")
 MAX_ROUNDS = 3
 CELL_REF_RE = re.compile(r"^\$?[A-Za-z]{1,3}\$?\d+$")
 
@@ -223,6 +228,14 @@ def validate_map(m: dict, record: dict) -> tuple[dict, list[str], list[str]]:
                                     and isinstance(next(iter(tol.values())), (int, float))
                                     and next(iter(tol.values())) >= 0):
             errors.append(f"{where}: 'numeric_tolerance' must be {{\"abs\": x}} or {{\"rel\": x}}")
+        if views.is_sheet_record(record):
+            if q.get("final_answer"):
+                errors.append(f"{where}: leave 'final_answer' out for a workbook — it is graded cell "
+                              "by cell against the verbatim cells, which are the answer key")
+            if q.get("tolerance") and not q.get("numeric_tolerance"):
+                errors.append(f"{where}: a workbook tolerance must be machine-readable — set "
+                              "'numeric_tolerance' ({\"abs\": x} or {\"rel\": x}); compare_xlsx.py "
+                              "applies only that")
         idx = resolve_list(q.get("blocks"), where, record, units, pos, errors)
         if idx and not any(units[i]["nonempty"] for i in idx):
             errors.append(f"{where}: its blocks contain no content")
@@ -249,6 +262,27 @@ def validate_map(m: dict, record: dict) -> tuple[dict, list[str], list[str]]:
             owners.setdefault(i, []).append("excluded")
         excluded.append({"reason": ex["reason"], "_idx": idx, "blocks": ex.get("blocks")})
 
+    # Workbook cells that stay in their section as context but are not graded.
+    ungraded = []
+    if m.get("ungraded_blocks") and not views.is_sheet_record(record):
+        errors.append("'ungraded_blocks' is only for workbooks (graded cell by cell); a document "
+                      "is graded question by question")
+    elif m.get("ungraded_blocks"):
+        excluded_idx = {i for ex in excluded for i in ex["_idx"]}
+        for n, ug in enumerate(m["ungraded_blocks"]):
+            where = f"ungraded_blocks[{n}]"
+            if not isinstance(ug, dict) or not isinstance(ug.get("reason"), str) or not ug["reason"].strip():
+                errors.append(f"{where}: needs 'blocks' and a non-empty 'reason'")
+                continue
+            idx = resolve_list(ug.get("blocks"), where, record, units, pos, errors)
+            for i in idx:
+                if i in excluded_idx:
+                    errors.append(f"{where}: {units[i]['id']} is already excluded")
+                elif units[i]["nonempty"] and "formula" in units[i].get("cell", {}):
+                    warnings.append(f"{where}: {units[i]['id']} holds a formula — leave it out of "
+                                    "grading only if students are not asked to produce it")
+            ungraded.append({"reason": ug["reason"], "_idx": idx, "blocks": ug.get("blocks")})
+
     uncovered = [u for i, u in enumerate(units) if u["nonempty"] and i not in owners]
     for u in uncovered:
         errors.append(f"uncovered content: {u['id']} {preview(u)!r} — assign it to a question, "
@@ -259,7 +293,7 @@ def validate_map(m: dict, record: dict) -> tuple[dict, list[str], list[str]]:
         warnings.append("content assigned to more than one question (fine if deliberate): "
                         + ", ".join(multi[:20]) + (" …" if len(multi) > 20 else ""))
     return {"questions": resolved_questions, "shared": shared, "excluded": excluded,
-            "units": units}, errors, warnings
+            "ungraded": ungraded, "units": units}, errors, warnings
 
 
 # ------------------------------------------------------------------ rendering
@@ -294,13 +328,18 @@ def render_rubric(resolved: dict, record: dict, label: str, sol_sha: str, round_
         "checker against the raw solutions. \"⋯\" marks skipped content that belongs to "
         "another section.",
     ]
+    if views.is_sheet_record(record):
+        lines += ["", "Workbook: graded cell by cell. Every cell line below is graded — a formula "
+                  "by its formula, a typed value by its value — except lines marked "
+                  "`(not graded)`, which are context only."]
+    ungraded_ids = {units[i]["id"] for ug in resolved["ungraded"] for i in ug["_idx"]}
     source_warnings = views.warnings(record)
     if source_warnings:
         lines += ["", "Source warnings:"] + [f"! {w}" for w in source_warnings]
 
     if resolved["shared"]:
         lines += ["", "## Shared context (applies to every question)"]
-        lines += render_section_body(record, [units[i] for i in resolved["shared"]])
+        lines += render_section_body(record, [units[i] for i in resolved["shared"]], ungraded_ids)
 
     for q in resolved["questions"]:
         title = f" — {q['title']}" if q.get("title") else ""
@@ -322,7 +361,7 @@ def render_rubric(resolved: dict, record: dict, label: str, sol_sha: str, round_
             lines.append(f"Image notes: {q['image_notes']}")
         if q.get("grading_notes"):
             lines.append(f"Grading notes: {q['grading_notes']}")
-        lines += render_section_body(record, [units[i] for i in q["_idx"]])
+        lines += render_section_body(record, [units[i] for i in q["_idx"]], ungraded_ids)
 
     if resolved["excluded"]:
         lines += ["", "## Excluded from grading (not answer content)"]
@@ -330,11 +369,16 @@ def render_rubric(resolved: dict, record: dict, label: str, sol_sha: str, round_
             shown = [units[i] for i in ex["_idx"] if units[i]["nonempty"]]
             first = preview(shown[0], 60) if shown else ""
             lines.append(f"- {', '.join(ex['blocks'])} — {ex['reason']} (first: {first!r})")
+    if resolved["ungraded"]:
+        lines += ["", "## Not graded (context only: marked `(not graded)` in the sections above)"]
+        lines += [f"- {', '.join(ug['blocks'])} — {ug['reason']}" for ug in resolved["ungraded"]]
     return "\n".join(lines) + "\n"
 
 
-def render_section_body(record: dict, selected: list[dict]) -> list[str]:
-    return image_lines(record, selected) + ["Solution (verbatim):"] + views.render_units(record, selected)
+def render_section_body(record: dict, selected: list[dict], ungraded_ids: set | None = None) -> list[str]:
+    suffix = {uid: "   (not graded)" for uid in ungraded_ids or ()}
+    return (image_lines(record, selected) + ["Solution (verbatim):"]
+            + views.render_units(record, selected, suffix=suffix))
 
 
 # ------------------------------------------------------------------- commands
@@ -498,6 +542,10 @@ def validate_review(review_file: Path, d: Path, status: dict) -> dict:
     for check in ("inventory_ok", "shared_ok", "exclusions_ok"):
         if review.get(check) is not True:
             problems.append(f"{check} must be true")
+    if (Path(status.get("solutions_file", "")).suffix.lower() in WORKBOOK_EXTS
+            and review.get("grading_scope_ok") is not True):
+        problems.append("grading_scope_ok must be true (workbook: every graded cell is one the "
+                        "student must produce; every cell marked not graded is only a note/label)")
     if problems:
         raise RubricError("review incomplete or not passing — " + "; ".join(problems)
                           + " (anything not true is a rejection: use `reject` with the issues)")

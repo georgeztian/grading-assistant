@@ -41,8 +41,12 @@ The script already guarantees two things. The id-tagged lines are verbatim copie
    - it doesn't merge distinct points or misstate one
    Graders will mark students INCOMPLETE from this list, so it must be exact.
 7. **Answer types / tolerances / grading notes:** each is sensible and supported by the solution. No invented alternatives or tolerances. A numeric tolerance (shown on the question's `Answer type` line; `compare_xlsx.py` applies it) must match the precision the solution itself uses.
-8. **Image notes:** content that exists only in images, renders or charts is described accurately and completely. Compare against the image itself.
-9. **The solution itself:** while checking, note anything in the official solution that looks wrong: an arithmetic slip, a wrong answer choice, a key point that contradicts the question. That isn't a rubric issue; it is a **hold** (Step 4).
+8. **Grading scope (workbooks only):** a workbook is graded cell by cell, and every cell in a section is graded except those marked `(not graded)`. Check both directions:
+   - Every graded cell is one a student must produce: a number, formula, given input or written answer.
+   - Every `(not graded)` cell is only an instructor note, comment or label, never an answer or working step.
+   - An answer left out of grading, or a note or label left graded, is a `grading_scope_error`.
+9. **Image notes:** content that exists only in images, renders or charts is described accurately and completely. Compare against the image itself.
+10. **The solution itself:** while checking, note anything in the official solution that looks wrong: an arithmetic slip, a wrong answer choice, a key point that contradicts the question. That isn't a rubric issue; it is a **hold** (Step 4).
 
 ### Step 4: Verdict (single decision)
 First write your review record, `review.json` in the rubric directory, covering **every** question id in the map:
@@ -54,6 +58,7 @@ First write your review record, `review.json` in the rubric directory, covering 
           "tolerance_ok": null, "image_notes_ok": null}},
  "inventory_ok": true, "shared_ok": true, "exclusions_ok": true}
 ```
+- For a workbook, also include `"grading_scope_ok": true` (item 8). A workbook section has no restated answer, so `restated_answer_ok` is `null` there.
 - Each check is `true` once you have verified it against the raw solutions.
 - Use `null` only when the question has nothing to check there (no restated answer, no key points, no tolerance, no image notes).
 - The script refuses a record that is incomplete, has anything `false`, or predates the current build.
@@ -69,11 +74,11 @@ Then:
          "fix": "move p53 into Q4's blocks"}
      ]}
      ```
-     `problem` is one of `omission`, `misassignment`, `wrong_boundary`, `key_point_error`, `restatement_error`, `image_note_error`, `exclusion_error`, `answer_type_error`, `other`.
+     `problem` is one of `omission`, `misassignment`, `wrong_boundary`, `key_point_error`, `restatement_error`, `image_note_error`, `exclusion_error`, `grading_scope_error`, `answer_type_error`, `other`.
   2. Run `.venv/Scripts/python scripts/rubric.py reject <solutions_file> <that issues.json>`.
   - List **every** issue you found, not just the first, each with the block ids involved and a concrete fix.
 - Don't approve "with minor issues". Anything inaccurate is a rejection.
-- **Rubric faithful, but the official solution looks wrong** (item 9):
+- **Rubric faithful, but the official solution looks wrong** (item 10):
   1. Write `concerns.json` in the rubric directory:
      ```json
      {"concerns": [{"question": "Q2", "source": "rubric-checker",

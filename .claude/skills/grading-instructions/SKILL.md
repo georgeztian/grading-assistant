@@ -15,7 +15,7 @@ Orchestrates the whole run:
 - All content extraction goes through the shared toolkit in `scripts/`. Agents read its compact **views**, not raw JSON.
 - Supports .doc, .docx, .pdf, .xlsx and .xls, for both submissions and solutions.
 - Single verification pass (no correction loops) for grading.
-- **No scoring**: no agent calculates or writes a total score/grade (e.g. "8/10", "80%", a letter grade). Agents give only per-question verdicts and explanations; scoring is left to the human instructor.
+- **No scoring**: no agent calculates or writes a total score/grade (e.g. "8/10", "80%", a letter grade). Agents give only per-question verdicts (per-cell for workbooks) and explanations; scoring is left to the human instructor.
 
 **Prerequisite (once per machine)**:
 - If `.venv/` doesn't exist, run `python scripts/setup_env.py`. It creates the private environment and installs `requirements.txt`.
@@ -28,16 +28,20 @@ Orchestrates the whole run:
   - `work_dir`: that file's own scratch folder (per file path, so identical submissions never share one)
   A `.pdf` is rebuilt once, in code, as the `.docx` its graded copy is written from.
 - `rubric.py`: the per-solutions-file answer key, and its gate. It serves the rubric only while it is verified, unchanged and not on hold. It also handles `hold`/`release` for solution concerns, and `graded` lists graded files made with an older answer key.
-- `compare_xlsx.py`: a deterministic numeric pre-check for workbooks. It uses the rubric's tolerances and labels rounding, percent-scale and layout-shift cases.
+- `compare_xlsx.py`: the **cell rule** for workbooks, applied in code. It re-runs every student formula on the solution's inputs and lists three groups:
+  - cells to **mark**: a wrong formula or wrong typed value is INCORRECT, an empty answer cell INCOMPLETE;
+  - cells **not** to mark: a right formula whose value is wrong only because an upstream error carried over;
+  - cells to **judge** (text answers, unusual formulas, shifted layouts).
+  It uses the rubric's tolerances. `annotate.py` refuses verdicts that break the rule, and `audit_graded.py` re-checks it.
 - `annotate.py` / `mark_review.py`: write the grader's and checker's marks with the pinned colors and wording. Agents never hand-write python-docx/openpyxl code for this. `annotate.py` also records in the graded file which answer key it used, and tags each annotation with its question.
 - `audit_graded.py`: the mechanical half of the checker's audit, run in two steps:
   - a status check first;
-  - after the checker commits its blind verdicts, the report: the grader's verdicts per question, an automatic comparison with the checker's, and every mechanical problem (mark, placement, colors, highlights, altered content, outdated answer key).
+  - after the checker commits its blind verdicts, the report: the grader's verdicts per question (per cell for workbooks), an automatic comparison with the checker's, and every mechanical problem (mark, placement, colors, highlights, altered content, outdated answer key).
 - `.claude/skills/grading-instructions/extraction-fallback.md`: manual extraction and image-inspection methods. Agents open it only when a view is wrong or flags content outside the text.
 
 **Annotation convention** (applied by `annotate.py`; full rules in `grader.md`):
 - Documents: red feedback text immediately below the wrong answer.
-- Workbooks: the wrong cell highlighted in Excel's "Bad" style (`FFC7CE` fill / `9C0006` font), plus a red explanation in the closest empty cell.
+- Workbooks, graded **cell by cell**: every wrong cell is highlighted in Excel's "Bad" style (`FFC7CE` fill / `9C0006` font), with a red explanation in the closest empty cell. A cell is wrong only if its own formula is wrong, it holds a wrong typed value, or it is empty. A right formula whose number is off only because of an upstream error is never marked; the root cell's explanation names the cells that inherit the error.
 - **Colors and mark wording are pinned exactly**: grader red `FF0000` (annotations and the `Grading Completed` mark), checker blue `0000FF` (`Review Passed` / `Review FAILED` and discrepancy text), with no variants or decoration.
 
 **Conceptual/explanation questions**: the rubric lists every key point each answer must cover. Graders and checkers check a student's answer against every one and name each missing point. Everyone uses the same list, so verdicts are consistent across students.
@@ -61,11 +65,11 @@ For each distinct solutions file matched in Step 0:
 
 1. Run `.venv/Scripts/python scripts/rubric.py status <solutions_file>`.
    - **`verified`**: reuse it (e.g. from an earlier batch) and go straight to grading.
-   - **`new`** or **`stale`** (the map or rubric changed after approval): start the loop below at step 2 (build).
+   - **`new`** or **`stale`** (the map, the rubric or the extraction version changed after approval): start the loop below at step 2 (build).
    - **`unverified`** (built, never reviewed — e.g. an interrupted run): start at step 3 (verify).
    - **`rejected`**: start at step 4 (correct), using the `last_issues` path that `status` prints.
    - **`on_hold`**: a solution concern is waiting for the user — go to **Holds** below.
-2. **Build**: invoke the **rubric-builder** agent with `solutions_file`. It writes the question→content map and runs `rubric.py build`, which copies the solution **verbatim**.
+2. **Build**: invoke the **rubric-builder** agent with `solutions_file`. It writes the question→content map and runs `rubric.py build`, which copies the solution **verbatim**. For a workbook, the map is a cell-level key: its sections restate no answers, tolerances are machine-readable, and `ungraded_blocks` names the notes and labels that are not graded. So which cells count is settled once, verified, and not left to each grader.
 3. **Verify**: invoke a **fresh rubric-checker** agent with `solutions_file`. This must be a new instance, never the builder. It compares the rubric against the raw solutions and then does one of:
    - `rubric.py approve <review.json>`: needs its per-question review record;
    - `rubric.py reject <issues.json>`;
@@ -105,7 +109,7 @@ Both agent types work independently on different files:
 - the matched `solutions_file` (Step 0)
 - `output_dir`: `graded-submissions/`, or its matching homework subfolder
 
-The process is in `grader.md`. Grading is final; there is no correction mode. If the grader reports the submission **unreadable**, no graded file is created. Tell the user which file and why, including any image-content note. Also pass on any `DEGRADED` `.xls` report (graded from values only because no Excel/LibreOffice converter was available).
+The process is in `grader.md`. Grading is final; there is no correction mode. If the grader reports the submission **unreadable**, no graded file is created. Tell the user which file and why, including any image-content note. Also pass on any `DEGRADED` `.xls` report (graded from values only because no Excel/LibreOffice converter was available). If a grader reports `CELL RULE CONCERN` (it believes `compare_xlsx.py` classified a cell wrongly), no graded file was written: show the user the cell and the grader's reasons, and ask how to proceed.
 
 ## Checker: Single-Pass Verification
 
@@ -118,7 +122,7 @@ The process is in `grading-checker.md`:
 - grade blind against the same rubric;
 - commit those verdicts to a file;
 - only then produce the audit report and compare against the grader's annotations.
-The scripts enforce that order, and `mark_review.py` won't mark a file without the blind audit. If a checker reports `RUBRIC CONCERN`, handle it as a hold (above).
+The scripts enforce that order, and `mark_review.py` won't mark a file without the blind audit. If a checker reports `RUBRIC CONCERN`, handle it as a hold (above). A `CELL RULE CONCERN` from a checker goes to the user the same way as a grader's; the file stays unmarked.
 
 **Final verdict** (single pass — never sent back to the grader):
 - **`Review Passed`** (blue `0000FF`, exact text): grading complete and verified ✓
@@ -128,13 +132,13 @@ The scripts enforce that order, and `mark_review.py` won't mark a file without t
 
 | Type | Meaning | Severity |
 |------|---------|----------|
-| `verdict_mismatch` | Grader/checker disagree on correct vs. not correct | high |
+| `verdict_mismatch` | Grader/checker disagree on correct vs. not correct (a question; a cell for workbooks) | high |
 | `outdated_rubric` | The file was graded against an answer key that is no longer the verified one (or an earlier version of the solutions file) | high |
 | `missed_question` | Grader skipped a question | high |
 | `annotation_placement` | Feedback not immediately below its answer (docx) / not the closest empty visible cell (xlsx) | medium |
 | `explanation_error` | Explanation unclear/incomplete/wrong | medium |
 | `incomplete_coverage` | Multi-part question not fully addressed | medium |
-| `cell_highlight_missing` | (.xlsx) Incorrect/incomplete cell not highlighted, or a correct cell wrongly highlighted | medium |
+| `cell_highlight_missing` | (.xlsx) A cell the cell rule says to mark is unmarked or has the other label, a correct / carried-over / `(not graded)` cell is marked, or a highlight is wrong or has no explanation beside it | medium |
 | `missing_keypoint_not_flagged` | Grader missed a key point absent from a conceptual answer, or flagged one that's actually present | medium |
 | `format_error` | Wrong color/mark wording, original student content altered, or a missing grading record/question tag | medium |
 | `label_mismatch` | Both say "wrong", but one says INCORRECT and the other INCOMPLETE | low |

@@ -180,9 +180,11 @@ def warnings(record: dict) -> list[str]:
     return out
 
 
-def render_units(record: dict, selected: list[dict], indent: str = "") -> list[str]:
+def render_units(record: dict, selected: list[dict], indent: str = "",
+                 suffix: dict | None = None) -> list[str]:
     """Render a subset of units (in the given order) verbatim, with sheet/page
-    context lines and an ellipsis wherever non-empty content is skipped."""
+    context lines and an ellipsis wherever non-empty content is skipped.
+    `suffix`: unit id -> text appended to that unit's last line."""
     all_nonempty = [u["id"] for u in units(record) if u["nonempty"]]
     rank = {uid: i for i, uid in enumerate(all_nonempty)}
     out: list[str] = []
@@ -203,7 +205,10 @@ def render_units(record: dict, selected: list[dict], indent: str = "") -> list[s
         if prev_rank is not None and r != prev_rank + 1:
             out.append(f"{indent}  ⋯")
         prev_rank = r
-        out += render_unit(u, indent + "  ")
+        lines = render_unit(u, indent + "  ")
+        if suffix and u["id"] in suffix:
+            lines[-1] += suffix[u["id"]]
+        out += lines
     return out
 
 

@@ -98,7 +98,9 @@ def extract_xlsx(path: Path, image_dir: Path | None = None) -> dict:
         ):
             for cell_f, cell_v in zip(row_f, row_v):
                 raw = cell_f.value
-                formula = formula_text(raw)
+                # A text cell may itself start with "=" (a label such as
+                # "=rate (nper,pmt,pv,fv)"): only a formula-typed cell is one.
+                formula = formula_text(raw) if cell_f.data_type == "f" else None
                 value = cell_v.value if formula is not None else raw
                 comment = cell_f.comment.text if cell_f.comment else None
 

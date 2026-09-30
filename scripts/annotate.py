@@ -12,19 +12,26 @@ done here, identically for every submission:
   appended at the end. A .doc is annotated from its Word/LibreOffice
   conversion and a .pdf from the base .docx rebuilt from it
   (lib/pdf_docx.py) — the same documents whose ids the extraction view shows.
-- workbooks (.xlsx/.xls -> .xlsx): the anchor (answer) cell gets Excel's
-  "Bad" style (FFC7CE fill, 9C0006 font) with its value/formula untouched,
-  and the explanation goes into the closest empty, visible cell — right,
-  then below, then outward along the row, then down the column — in bold
-  red (FF0000); a final "Grading Summary" tab holds `Grading Completed` in
-  A1. The student's text boxes/shapes (which openpyxl drops) are restored.
+- workbooks (.xlsx/.xls -> .xlsx): graded cell by cell. Each annotated
+  cell gets Excel's "Bad" style (FFC7CE fill, 9C0006 font) with its
+  value/formula untouched, and the explanation goes into the closest empty,
+  visible cell — right, then below, then outward along the row, then down
+  the column — in bold red (FF0000); a final "Grading Summary" tab holds
+  `Grading Completed` in A1. The student's text boxes/shapes (which openpyxl
+  drops) are restored. Against a workbook solution the cell rule of
+  compare_xlsx.py is enforced: every cell it lists under MARK must be
+  annotated with its label (a wrong formula or wrong typed value INCORRECT,
+  an empty cell INCOMPLETE), and no correct or carried-over cell (right
+  formula, value wrong only because of an upstream error) may be — the
+  script refuses verdicts that break the rule.
 
 Provenance (lib/marks.py): the graded file records which solutions file and
 which verified rubric it was graded against, and every annotation carries a
 hidden tag naming its rubric question — so the checker's audit can map
 annotations to questions exactly, and outdated grading can be found later
 (`rubric.py graded`). The rubric must be verified; question ids must be the
-rubric's.
+rubric's. For a workbook `question` may be left out: the cell's rubric
+question is recorded.
 
 verdicts.json (write it in the submission's work_dir from extract.py; it is
 deleted once the graded file is written — the graded file is the record):
@@ -32,9 +39,10 @@ deleted once the graded file is written — the graded file is the record):
         {"question": "Q3", "verdict": "INCORRECT", "anchor": "p61",
          "text": "The correct answer is C ($300.29) because ... Your answer A ..."},
         {"question": "Q7", "verdict": "INCOMPLETE", "anchor": "t2:r3c1", "text": "..."},
-        {"question": "WACC-market", "verdict": "INCORRECT", "anchor": "Ex TN5 WACC!G6", "text": "..."}
+        {"verdict": "INCORRECT", "anchor": "Ex TN5 WACC!G12", "text": "..."}
     ]}
-  question: a rubric question id (`rubric.py path` lists them).
+  question: a rubric question id (`rubric.py path` lists them); optional
+  for a workbook cell.
   anchor: document `pN` (below paragraph N), `tN` (below table N), `sN`
   (below content control N), or `tN:rRcC` (inside that table cell);
   workbook `Sheet!Cell` (for an answer in a text box: the cell it is
@@ -72,6 +80,7 @@ from openpyxl.workbook.defined_name import DefinedName
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib import cache, marks, views  # noqa: E402
 from lib.xlsx_shapes import restore_shapes  # noqa: E402
+import compare_xlsx  # noqa: E402
 import extract  # noqa: E402
 import rubric  # noqa: E402
 from extract_docx import body_blocks  # noqa: E402
@@ -89,7 +98,7 @@ class AnnotateError(Exception):
     pass
 
 
-def load_annotations(path: Path, question_ids: list[str]) -> list[dict]:
+def load_annotations(path: Path, question_ids: list[str], question_optional: bool = False) -> list[dict]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -102,7 +111,7 @@ def load_annotations(path: Path, question_ids: list[str]) -> list[dict]:
         where = f"annotations[{n}]"
         if not isinstance(a, dict):
             raise AnnotateError(f"{where}: must be an object")
-        if a.get("question") not in question_ids:
+        if a.get("question") not in question_ids and not (question_optional and a.get("question") is None):
             raise AnnotateError(f"{where}: 'question' must be one of the rubric's question ids "
                                 f"{question_ids}, got {a.get('question')!r}")
         verdict = str(a.get("verdict", "")).upper()
@@ -117,9 +126,47 @@ def load_annotations(path: Path, question_ids: list[str]) -> list[dict]:
         anchor = a.get("anchor")
         if not isinstance(anchor, str) or not anchor.strip():
             raise AnnotateError(f"{where}: 'anchor' is required")
-        out.append({"question": a["question"], "verdict": verdict,
+        out.append({"question": a.get("question"), "verdict": verdict,
                     "anchor": anchor.strip(), "text": text})
     return out
+
+
+def cell_id(anchor: str) -> str:
+    """A workbook anchor as compare_xlsx.py names cells: Sheet!G12."""
+    sheet, ref = views.split_sheet_ref(anchor)
+    return f"{sheet}!{ref.replace('$', '').upper()}"
+
+
+def check_cell_rule(annotations: list[dict], result: dict) -> None:
+    """Refuse workbook verdicts that break the cell rule: every MARK cell
+    annotated with its label, no correct or carried-over cell annotated. A
+    missing question is filled in from the cell's rubric question."""
+    must, must_not = compare_xlsx.expected_marks(result)
+    question_of = {f"{r['sheet']}!{r['cell']}": r.get("question") for r in result["cells"]}
+    labels: dict[str, set] = {}
+    for a in annotations:
+        if "!" not in a["anchor"]:
+            continue  # annotate_workbook reports the bad anchor
+        cid = cell_id(a["anchor"])
+        labels.setdefault(cid, set()).add(a["verdict"])
+        if a["question"] is None:
+            a["question"] = question_of.get(cid)
+    problems = []
+    for cid, r in must.items():
+        if cid not in labels:
+            problems.append(f"{cid} must be marked {r['mark']}: {compare_xlsx.describe(r)}")
+        elif r["mark"] not in labels[cid]:
+            problems.append(f"{cid} must be labelled {r['mark']}, not "
+                            f"{'/'.join(sorted(labels[cid]))}: {compare_xlsx.describe(r)}")
+    for cid, r in must_not.items():
+        if cid in labels:
+            problems.append(f"{cid} must not be marked: {compare_xlsx.describe(r)}")
+    for cid in sorted(set(labels) & set(result.get("not_graded", []))):
+        problems.append(f"{cid} must not be marked: the answer key leaves it out of grading "
+                        "(a note, label or excluded content)")
+    if problems:
+        raise AnnotateError("the verdicts break the cell rule (see compare_xlsx.py): "
+                            + "; ".join(problems))
 
 
 def provenance(info: dict, annotations: list[dict], placed: list[dict]) -> dict:
@@ -281,9 +328,7 @@ def annotate_workbook(submission: Path, annotations: list[dict], out_path: Path,
 
     red_bold = Font(color=marks.GRADER_RED, bold=True)
     bad_fill = PatternFill(start_color=marks.BAD_FILL, end_color=marks.BAD_FILL, fill_type="solid")
-    taken: dict[str, set] = {}
-    hidden: dict[str, tuple] = {}
-    placed = []
+    targets = []
     for n, a in enumerate(annotations, 1):
         if "!" not in a["anchor"]:
             raise AnnotateError(f"anchor {a['anchor']!r}: expected Sheet!Cell for a workbook")
@@ -301,8 +346,21 @@ def annotate_workbook(submission: Path, annotations: list[dict], out_path: Path,
         for rng in ws.merged_cells.ranges:  # a merged answer lives in its top-left cell
             if rng.min_row <= row <= rng.max_row and rng.min_col <= col <= rng.max_col:
                 row, col = rng.min_row, rng.min_col
-        sheet_taken = taken.setdefault(sheet, set())
-        sheet_taken.add((row, col))
+        targets.append((n, a, sheet, row, col))
+
+    # Every answer cell is reserved before any explanation is placed (an
+    # empty answer cell must never receive another cell's explanation), and
+    # explanations are placed answer by answer in row/column order, several
+    # on one answer stacking in list order — exactly the order
+    # audit_graded.py replays.
+    taken: dict[str, set] = {}
+    hidden: dict[str, tuple] = {}
+    for _n, _a, sheet, row, col in targets:
+        taken.setdefault(sheet, set()).add((row, col))
+    placed: list = [None] * len(annotations)
+    for n, a, sheet, row, col in sorted(targets, key=lambda t: (t[2], t[3], t[4], t[0])):
+        ws = wb[sheet]
+        sheet_taken = taken[sheet]
         sheet_hidden = hidden.setdefault(sheet, hidden_rows_cols(ws))
 
         answer = ws.cell(row=row, column=col)
@@ -319,8 +377,8 @@ def annotate_workbook(submission: Path, annotations: list[dict], out_path: Path,
         tag = f"{marks.ANNOTATION_TAG}{n}"
         wb.defined_names[tag] = DefinedName(
             tag, attr_text=f"{quote_sheetname(sheet)}!${get_column_letter(c)}${r}")
-        placed.append({"question": a["question"], "anchor": f"{sheet}!{answer.coordinate}",
-                       "annotation_cell": f"{sheet}!{note.coordinate}"})
+        placed[n - 1] = {"question": a["question"], "anchor": f"{sheet}!{answer.coordinate}",
+                         "annotation_cell": f"{sheet}!{note.coordinate}"}
 
     summary = wb.create_sheet(marks.SUMMARY_SHEET)
     summary["A1"] = marks.GRADING_COMPLETED
@@ -368,7 +426,10 @@ def main():
             if marks.mark_state(out_path)["reviewed"]:
                 raise AnnotateError(f"{out_path} already carries the checker's review — it is "
                                     "never overwritten")
-        annotations = load_annotations(args.verdicts, info["question_ids"])
+        cell_mode = ext in SHEET_EXTS and args.solutions.suffix.lower() in SHEET_EXTS
+        annotations = load_annotations(args.verdicts, info["question_ids"], question_optional=cell_mode)
+        if cell_mode:
+            check_cell_rule(annotations, compare_xlsx.grade_cells(args.submission, args.solutions))
         if ext in SHEET_EXTS:
             placed, notes = annotate_workbook(args.submission, annotations, out_path, info)
         else:

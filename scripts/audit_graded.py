@@ -7,20 +7,25 @@ that make blind grading structural rather than an honour rule.
    Nothing about the grader's verdicts is shown or written.
 
 2. Report (`--report --blind <checker_blind.json>`): the checker first
-   commits its own blind verdict for EVERY rubric question to a file; only
-   then does this produce the report (audit.json, in the checker's own
-   folder), which records the blind file's hash. It contains:
+   commits its own blind verdicts to a file — for a document, one per rubric
+   question; for a workbook graded against a workbook solution, every cell
+   it would mark — and only then does this produce the report (audit.json,
+   in the checker's own folder), which records the blind file's hash. It
+   contains:
    - every grader annotation — its rubric question (from the hidden tag
      annotate.py writes), verdict label, full text, and the id of the
      paragraph/cell it sits under (the extraction view's ids);
-   - `comparison`: per question, the checker's blind verdict vs the
-     grader's (no annotation = correct): agree / verdict_mismatch (correct vs
-     not) / label_mismatch (INCORRECT vs INCOMPLETE);
+   - `comparison`: the checker's blind verdicts vs the grader's — per
+     question for a document (no annotation = correct), per cell for a
+     workbook (every cell either of them marked): agree / verdict_mismatch
+     (marked vs not) / label_mismatch (INCORRECT vs INCOMPLETE);
    - `problems`: facts, not judgments — the mark not exact, original student
      content altered or deleted, wrong colour shade, annotation text over a
      non-empty cell, a highlight without an annotation (or vice versa), an
      annotation that is not the closest empty visible cell, a missing
-     question tag, and grading against an outdated rubric.
+     question tag, grading against an outdated rubric, and, for a workbook,
+     any break of compare_xlsx.py's cell rule (a wrong or empty cell left
+     unmarked or with the wrong label, a correct or carried-over cell marked).
    mark_review.py refuses to write the final mark without this report.
 
 Whether a verdict or explanation is *right* stays the checker's own work.
@@ -29,11 +34,15 @@ Usage:
     .venv/Scripts/python scripts/audit_graded.py <graded> <submission> --solutions <solutions>
     .venv/Scripts/python scripts/audit_graded.py <graded> <submission> --solutions <solutions> --report --blind <checker_blind.json>
 
-checker_blind.json:
+checker_blind.json, document:
     {"verdicts": [{"question": "Q1", "verdict": "correct"},
                   {"question": "Q2", "verdict": "incorrect", "explanation": "…"},
                   {"question": "Q3", "verdict": "incomplete", "explanation": "…"}]}
   verdict: correct | incorrect | incomplete | unreadable — one per rubric question.
+checker_blind.json, workbook (every cell you would mark; unlisted = not marked):
+    {"cells": [{"cell": "Ex TN5 WACC!G12", "verdict": "incorrect", "explanation": "…"},
+               {"cell": "Ex TN5 WACC!C9", "verdict": "incomplete", "explanation": "…"}]}
+  verdict: incorrect | incomplete. An empty list says nothing needs a mark.
 """
 from __future__ import annotations
 
@@ -57,6 +66,7 @@ from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib import cache, marks  # noqa: E402
 import annotate  # noqa: E402
+import compare_xlsx  # noqa: E402
 import extract  # noqa: E402
 import rubric  # noqa: E402
 from extract_docx import body_blocks, element_text, has_image  # noqa: E402
@@ -262,10 +272,16 @@ def _comparable(value):
     return value
 
 
-def audit_workbook(graded: Path, submission: Path) -> dict:
+def audit_workbook(graded: Path, submission: Path, meta: dict | None = None) -> dict:
+    """`meta`: the graded file's provenance record, which says how many
+    annotations each answer cell got, so stacked explanations replay exactly."""
     from openpyxl.cell.cell import MergedCell
     from openpyxl.utils.cell import get_column_letter
 
+    per_answer: dict[str, int] = {}
+    for m in (meta or {}).get("annotations", []):
+        if isinstance(m.get("anchor"), str):
+            per_answer[m["anchor"]] = per_answer.get(m["anchor"], 0) + 1
     report = {"type": "xlsx", "graded_file": str(graded), "problems": []}
     source, notes = annotate._workbook_source(submission)
     with warnings.catch_warnings():
@@ -324,8 +340,9 @@ def audit_workbook(graded: Path, submission: Path) -> dict:
 
         # Pair highlighted answers with annotations by replaying annotate.py's
         # placement over the ORIGINAL sheet: answers in row order, each
-        # taking the first cell of its search order that was empty and not
-        # already taken by an answer or an earlier annotation.
+        # taking the first cell(s) of its search order that were empty and
+        # not already taken by an answer or an earlier annotation — as many
+        # as the grading record says it got (one without a record).
         highlight_set = set(highlighted)
         hidden_rows, hidden_cols = annotate.hidden_rows_cols(ows)
         for (r, c) in notes_cells:
@@ -342,17 +359,21 @@ def audit_workbook(graded: Path, submission: Path) -> dict:
 
         claimed: dict[tuple, tuple] = {}  # note cell -> answer cell
         for (r, c) in sorted(highlighted):
+            wanted = max(1, per_answer.get(f"{name}!{get_column_letter(c)}{r}", 1))
+            got = 0
             for rc in annotate.search_order(r, c):
                 if blocked(rc) or rc in claimed:
                     continue
-                if rc in notes_cells:
-                    claimed[rc] = (r, c)
-                else:
+                if rc not in notes_cells:
                     report["problems"].append({"type": "cell_highlight_missing",
                                                "where": f"{name}!{get_column_letter(c)}{r}",
                                                "detail": "highlighted cell has no annotation in the "
                                                          "closest empty cell"})
-                break
+                    break
+                claimed[rc] = (r, c)
+                got += 1
+                if got == wanted:
+                    break
         # Extra notes on one answer stack further along its search order.
         for rc in sorted(set(notes_cells) - set(claimed)):
             best = None
@@ -467,6 +488,71 @@ def load_blind(path: Path, question_ids: list[str]) -> dict:
     return verdicts
 
 
+def load_blind_cells(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read blind verdicts: {exc}")
+    items = data.get("cells") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        raise ValueError('a workbook\'s blind verdicts must be {"cells": [{"cell": "Sheet!A1", '
+                         '"verdict": "incorrect"|"incomplete", …}]} — every cell you would mark')
+    verdicts = {}
+    for n, v in enumerate(items):
+        if not isinstance(v, dict) or "!" not in str(v.get("cell", "")):
+            raise ValueError(f"cells[{n}]: 'cell' must be a Sheet!A1 reference")
+        if str(v.get("verdict", "")).lower() not in ("incorrect", "incomplete"):
+            raise ValueError(f"cells[{n}]: 'verdict' must be incorrect or incomplete (list only "
+                             "the cells you would mark)")
+        verdicts[annotate.cell_id(v["cell"])] = str(v["verdict"]).lower()
+    return verdicts
+
+
+def compare_cells(blind: dict, annotations: list[dict]) -> list[dict]:
+    grader: dict[str, set] = {}
+    for a in annotations:
+        if a.get("answer_cell"):
+            cid = f"{a['sheet']}!{a['answer_cell']}"
+            grader.setdefault(cid, set()).add((a["verdict_label"] or "?").lower())
+    out = []
+    for cid in sorted(set(blind) | set(grader)):
+        mine = blind.get(cid, "correct")
+        labels = grader.get(cid, set())
+        theirs = "correct" if not labels else "incorrect" if "incorrect" in labels else "incomplete"
+        status = ("agree" if mine == theirs else "verdict_mismatch" if "correct" in (mine, theirs)
+                  else "label_mismatch")
+        out.append({"cell": cid, "checker": mine, "grader": theirs, "status": status})
+    return out
+
+
+def cell_rule_problems(annotations: list[dict], result: dict) -> list[dict]:
+    """The grader's marks against compare_xlsx.py's cell rule."""
+    must, must_not = compare_xlsx.expected_marks(result)
+    labels: dict[str, set] = {}
+    for a in annotations:
+        if a.get("answer_cell"):
+            labels.setdefault(f"{a['sheet']}!{a['answer_cell']}", set()).add(a["verdict_label"])
+    problems = []
+    for cid, r in must.items():
+        if cid not in labels:
+            problems.append({"type": "cell_highlight_missing", "where": cid,
+                             "detail": f"must be marked {r['mark']} but is not: "
+                                       f"{compare_xlsx.describe(r)}"})
+        elif r["mark"] not in labels[cid]:
+            problems.append({"type": "cell_highlight_missing", "where": cid,
+                             "detail": f"labelled {'/'.join(sorted(map(str, labels[cid])))}, but the "
+                                       f"rule gives {r['mark']}: {compare_xlsx.describe(r)}"})
+    for cid, r in must_not.items():
+        if cid in labels:
+            problems.append({"type": "cell_highlight_missing", "where": cid,
+                             "detail": f"marked, but must not be: {compare_xlsx.describe(r)}"})
+    for cid in sorted(set(labels) & set(result.get("not_graded", []))):
+        problems.append({"type": "cell_highlight_missing", "where": cid,
+                         "detail": "marked, but the answer key leaves this cell out of grading "
+                                   "(a note, label or excluded content)"})
+    return problems
+
+
 def compare(blind: dict, annotations: list[dict], meta: dict | None) -> list[dict]:
     by_n = {a["n"]: a["question"] for a in (meta or {}).get("annotations", [])}
     grader: dict[str, set] = {}
@@ -524,20 +610,32 @@ def main():
             }, indent=2, ensure_ascii=False))
             sys.exit(0 if state["grading_completed"] else 2)
 
+        cell_mode = ext == ".xlsx" and args.solutions.suffix.lower() in (".xlsx", ".xls")
         if args.blind is None:
-            raise ValueError("--report needs --blind <checker_blind.json>: commit your own verdict "
-                             "for every rubric question before seeing the grader's")
+            raise ValueError("--report needs --blind <checker_blind.json>: commit your own verdicts "
+                             + ("(every cell you would mark)" if cell_mode else
+                                "(one for every rubric question)")
+                             + " before seeing the grader's")
         # The checker grades against the current verified rubric (it cannot
         # grade blind without one); an outdated graded file shows up in prov.
-        blind = load_blind(args.blind, rubric.verified_rubric(args.solutions)["question_ids"])
-        report = (audit_document if ext == ".docx" else audit_workbook)(
-            args.graded_file, args.submission_file)
+        question_ids = rubric.verified_rubric(args.solutions)["question_ids"]
+        blind = load_blind_cells(args.blind) if cell_mode else load_blind(args.blind, question_ids)
+        report = (audit_document(args.graded_file, args.submission_file) if ext == ".docx"
+                  else audit_workbook(args.graded_file, args.submission_file, meta))
         report["problems"] = prov + report["problems"]
         for a in report["annotations"]:
             if a.get("tag") is None:
                 report["problems"].append({"type": "format_error", "annotation": a["n"],
                                            "detail": "annotation has no question tag"})
-        report["comparison"] = compare(blind, report["annotations"], meta)
+        if cell_mode:
+            by_n = {m["n"]: m.get("question") for m in (meta or {}).get("annotations", [])}
+            for a in report["annotations"]:
+                a["question"] = by_n.get(a.get("tag"))
+            report["problems"] += cell_rule_problems(
+                report["annotations"], compare_xlsx.grade_cells(args.submission_file, args.solutions))
+            report["comparison"] = compare_cells(blind, report["annotations"])
+        else:
+            report["comparison"] = compare(blind, report["annotations"], meta)
         report["blind_sha256"] = hashlib.sha256(args.blind.read_bytes()).hexdigest()
         report["graded_sha256"] = cache.sha256_of(args.graded_file)
     except (RuntimeError, ValueError, rubric.RubricError) as exc:

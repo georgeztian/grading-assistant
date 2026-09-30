@@ -12,7 +12,8 @@ Grade students' homework submissions using concurrent **grader agents** (red ann
 - **Python environment**: always run Python via the project's private venv — `.venv/Scripts/python` (Windows; `.venv/bin/python` on macOS/Linux), never bare `python`/`pip` — for the `scripts/` toolkit *and* any ad hoc code. If `.venv/` is missing, run `python scripts/setup_env.py` once first (the only time a system `python` is used). Toolkit scripts relaunch themselves into `.venv` if started with the wrong interpreter, but ad hoc code does not.
 - **Submissions**: Accepts .doc, .docx, .pdf, .xlsx, and .xls files
 - **Annotations**: Only annotate incorrect/incomplete answers (correct answers need no feedback). Placement convention (documents vs. spreadsheets) and conceptual-question key-point checking (against the rubric's key points) are detailed in `grader.md` and summarized in `SKILL.md`. Grader and checker must follow the same methods. Manual extraction fallbacks are in `.claude/skills/grading-instructions/extraction-fallback.md`
-- **No scoring**: Agents never calculate or write a total score/grade (e.g. "8/10", "80%", a letter grade) — only per-question correct/incorrect/partial verdicts and explanations. Scoring is left entirely to the human instructor.
+- **Spreadsheets are graded cell by cell, by formula**: a cell is INCORRECT only if its own formula is wrong or it holds a wrong typed value (no formula), and INCOMPLETE if it is an empty answer cell. A correct formula whose number is wrong only because of an upstream error is never marked. Every wrong cell is marked, however many sit in one question. `compare_xlsx.py` decides this in code by re-running each student formula on the solution's inputs, `annotate.py` enforces it, and `audit_graded.py` re-checks it. Which cells are graded is settled once in the verified rubric: every cell of a section, except the notes and labels its map lists as `ungraded_blocks`.
+- **No scoring**: Agents never calculate or write a total score/grade (e.g. "8/10", "80%", a letter grade) — only per-question (per-cell for spreadsheets) correct/incorrect/partial verdicts and explanations. Scoring is left entirely to the human instructor.
 - **Verification**: Single-pass check by grader-checker (no correction loops). The checker commits its own blind verdicts to a file before the audit report (grader's verdicts plus an automatic comparison) can be produced, and `mark_review.py` refuses to mark a file without that blind audit.
   - If "Review Passed" → grading complete ✓
   - If "Review FAILED" → explicitly state problems
@@ -37,13 +38,13 @@ Use the `/grading-instructions` skill for detailed workflow and invocation instr
   - `extract_docx.py` / `extract_pdf.py` / `extract_xlsx.py` / `extract_xls.py`: per-format extractors
   - `convert_doc.py`: `.doc`/`.xls` conversion via Word/Excel COM or LibreOffice
   - `rubric.py`: answer key build/verify gate
-  - `compare_xlsx.py`: deterministic numeric pre-check
+  - `compare_xlsx.py`: the spreadsheet cell rule (which cells to mark, which carry an upstream error)
   - `annotate.py`: grader output
   - `audit_graded.py`: the checker's mechanical audit
   - `mark_review.py`: checker marks
   - `setup_env.py`: creates `.venv/`
   - `_venv.py`: interpreter guard every script imports
-  - `lib/`: shared helpers (views, PDF→docx rebuild, image export, pinned marks, cache)
+  - `lib/`: shared helpers (views, PDF→docx rebuild, image export, pinned marks, cache, Excel formula evaluator)
 - `.cache/` — git-ignored cache written by `scripts/`:
   - `.cache/extraction/`: records + views
   - `.cache/converted/`

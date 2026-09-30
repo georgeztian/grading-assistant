@@ -36,7 +36,7 @@ Plain `python-docx`/`pypdf` text extraction misses or corrupts equations.
 Read every tab, not just the active one.
 
 - **.xlsx** (`openpyxl`): iterate `workbook.sheetnames`, including hidden sheets (`sheet_state != 'visible'`) unless they are clearly scratch/unused.
-  - **Formulas vs. values:** load twice. `data_only=False` gives the formula string, and `data_only=True` gives the cached value (which is `None` for a file never opened/saved in Excel). Keep both.
+  - **Formulas vs. values:** load twice. `data_only=False` gives the formula string, and `data_only=True` gives the cached value (which is `None` for a file never opened/saved in Excel). Keep both. Only a cell whose `data_type` is `"f"` holds a formula; a text cell may itself start with `=`.
   - Check hidden rows/columns (`row_dimensions[n].hidden`, `column_dimensions[letter].hidden`) and cell comments.
   - Check `worksheet._images` / `worksheet._charts`. This needs Pillow, which is installed in `.venv`.
 - **.xls** (`xlrd<2.0`, since 2.0+ dropped `.xls`): `xlrd.open_workbook(path).sheets()`. It exposes cached values only, never formulas, so don't treat a missing formula as absent content. It has no image API (see above).

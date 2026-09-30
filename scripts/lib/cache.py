@@ -48,7 +48,8 @@ WORK_DIR = REPO_ROOT / ".cache" / "work"
 #      drawing parts; PDF vector graphics flagged and pictured.
 # v11: records name no file (shared by identical submissions); views are per
 #      file path; conversions/PDF bases have content-neutral names.
-SCHEMA_VERSION = 11
+# v12: an xlsx text cell starting with "=" is text, not a formula.
+SCHEMA_VERSION = 12
 
 _sha_memo: dict[tuple, str] = {}
 

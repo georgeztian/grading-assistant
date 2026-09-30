@@ -35,26 +35,39 @@ The scripts enforce this order. The audit report can't be produced without your 
   - **Grade only by the rubric.** You may open the raw solutions view (`extract.py <solutions_file>` → `view_path`) to *look at* content the rubric points to. If you believe the rubric or official solution is wrong for a question, **stop** without marking the file and report `RUBRIC CONCERN` (question id, what it says, what you believe is right, and why). The orchestrator puts the answer key on hold and asks the user.
 - Run `.venv/Scripts/python scripts/extract.py <submission_file>` and Read the **view** at `view_path` (not the JSON). It is usually a cache hit from the grader's run.
 - Heed every view warning (`!` lines, `(image)` tags, `FLAGGED` PDF pages) and inspect that content directly, especially before disputing something the grader based on a figure. Charts show their data inline, and spreadsheet text boxes are listed as `textboxN`. See `.claude/skills/grading-instructions/extraction-fallback.md` when needed.
-- **Spreadsheets:** run `.venv/Scripts/python scripts/compare_xlsx.py <submission_file> <solutions_file>` for the deterministic numeric pre-check.
-  - It uses the rubric's per-question tolerances.
-  - It labels `rounded` / `percent_scale` mismatches and `found_at` / `PROBABLE LAYOUT SHIFT` cases. Judge those yourself: rounding within the rubric's tolerance, or a merely shifted layout, is not a wrong answer.
-  - Still independently judge every `needs_review` and `sheet_missing_in_submission` cell, and confirm `likely_downstream_of` cascades yourself.
-- For **every** question in the rubric: decide `correct`, `incorrect`, `incomplete` (partial), or `unreadable`, with your own explanation.
+- **Documents:** for **every** question in the rubric, decide `correct`, `incorrect`, `incomplete` (partial), or `unreadable`, with your own explanation.
   - **Conceptual answers:** check the student's answer against **every** rubric key point. A coherent answer that omits one is **incomplete**. This is the same method as `grader.md` Step 3.
-- **Commit your blind verdicts** to `<work_dir>/checker_blind.json`, one entry for every rubric question:
-  ```json
-  {"verdicts": [
-    {"question": "Q1", "verdict": "correct"},
-    {"question": "Q2", "verdict": "incorrect", "explanation": "…"},
-    {"question": "Q3", "verdict": "incomplete", "explanation": "missing key point …"}]}
-  ```
+  - **Commit your blind verdicts** to `<work_dir>/checker_blind.json`, one entry for every rubric question:
+    ```json
+    {"verdicts": [
+      {"question": "Q1", "verdict": "correct"},
+      {"question": "Q2", "verdict": "incorrect", "explanation": "…"},
+      {"question": "Q3", "verdict": "incomplete", "explanation": "missing key point …"}]}
+    ```
+- **Workbooks (against a workbook solution): cell by cell**, by the same rule as `grader.md` Step 3:
+  - a cell is INCORRECT only if its own formula is wrong or it holds a wrong typed value;
+  - an empty answer cell is INCOMPLETE;
+  - a right formula showing a wrong number carried over from upstream is never marked.
+  - Run `.venv/Scripts/python scripts/compare_xlsx.py <submission_file> <solutions_file>`. It applies the rule in code, re-running each student formula on the solution's inputs, and lists MARK, DO NOT MARK (`carried_over`) and JUDGE cells. It uses the rubric's tolerances.
+  - Check its MARK list against the student's formulas and the solution's.
+  - Decide every JUDGE cell yourself (text answers, text the solution has where the student's cell is empty, formulas it could not re-run, a layout shift or renamed tab).
+  - **Commit your blind verdicts** to `<work_dir>/checker_blind.json`: **every cell you would mark**. Unlisted cells count as not marked, and an empty list is valid:
+    ```json
+    {"cells": [
+      {"cell": "Ex TN5 WACC!G12", "verdict": "incorrect", "explanation": "…"},
+      {"cell": "Ex TN5 WACC!C9", "verdict": "incomplete", "explanation": "…"}]}
+    ```
+  - If you are convinced the script classified a cell wrongly, stop without marking the file and report `CELL RULE CONCERN` (the cell and why).
 
 ### Step 3: Audit report and comparison
 - Run `.venv/Scripts/python scripts/audit_graded.py <graded_file> <submission_file> --solutions <solutions_file> --report --blind <work_dir>/checker_blind.json`, then Read the `report_path` it prints.
 - The report contains:
-  - **`comparison`**: for each rubric question, your verdict against the grader's (no annotation = the grader judged it correct), with a status:
+  - **`comparison`**: your verdicts against the grader's, with a status:
+    - documents: one row per rubric question (no annotation = the grader judged it correct);
+    - workbooks: one row per cell that either of you marked, keyed by `cell`.
+    Statuses:
     - `agree`
-    - `verdict_mismatch`: correct vs. not correct (or unreadable)
+    - `verdict_mismatch`: correct (not marked) vs. not correct (or unreadable)
     - `label_mismatch`: INCORRECT vs. INCOMPLETE, both "wrong" but with a different verdict
   - **`annotations`**: every grader annotation.
     - Each has its rubric `question` (from the hidden tag the grader's script wrote), verdict label and full text.
@@ -67,11 +80,13 @@ The scripts enforce this order. The audit report can't be produced without your 
     - an annotation after the mark, below a blank line, or in a hidden row/column
     - a highlight without an annotation, or an annotation that isn't the closest empty visible cell
     - an annotation with no question tag
-- Then, question by question, also judge what the script can't:
+    - for a workbook, any break of the cell rule (`cell_highlight_missing`): a MARK cell unmarked or with the other label, or a correct, carried-over or `(not graded)` cell marked
+- Then, question by question (cell by cell for a workbook), also judge what the script can't:
   - **Annotation under the wrong answer?** Its `after` / `answer_cell` isn't where that question's answer is → `annotation_placement`.
   - **Explanation wrong, unclear or unspecific?** It doesn't state the correct answer and working, or doesn't pinpoint the student's actual error → `explanation_error`.
   - **Multi-part question only partly addressed** → `incomplete_coverage`.
-  - **Workbook:** an incorrect cell not highlighted, or a correct cell highlighted → `cell_highlight_missing`.
+  - **Workbook:** a JUDGE cell you decided differently from the grader is already a `comparison` row (`verdict_mismatch` / `label_mismatch`, keyed by its `cell`): list it with that type. The script already reports MARK / DO NOT MARK cells under `problems`.
+  - **Workbook explanation:** it must give the correct formula/value and the exact fault, and name the downstream cells that inherit the error → otherwise `explanation_error`.
   - **Key point missed:** the grader missed a key point you found absent, marked an answer correct despite a missing key point, or named a "missing" point that's actually present → `missing_keypoint_not_flagged`.
   - A `verdict_mismatch` where the grader skipped the question entirely can be recorded as `missed_question` instead.
 
@@ -87,7 +102,7 @@ The scripts enforce this order. The audit report can't be produced without your 
         {"type": "outdated_rubric", "notes": "graded against answer-key round 1; the verified key is now round 2"}],
       "summary": "Grader's verdicts agree with the checker on every question except Q2 (marked correct when incorrect)."}
      ```
-     - `question`, `checker_verdict` and `grader_verdict` are required for `verdict_mismatch`, `label_mismatch` and `missed_question`. A problem about the whole file may leave them out, but must say what is wrong in `notes`.
+     - `question`, `checker_verdict` and `grader_verdict` are required for `verdict_mismatch`, `label_mismatch` and `missed_question`. For a workbook, give the comparison row's `cell` (e.g. `"cell": "Ex TN5 WACC!G12"`) instead of `question`. A problem about the whole file may leave them out, but must say what is wrong in `notes`.
      - The summary describes agreement/disagreement only, never a score or fraction.
      - Put ambiguity notes in `notes`.
   2. Run `.venv/Scripts/python scripts/mark_review.py <graded_file> failed <work_dir>/discrepancies.json --submission <submission_file>`. It refuses if a disagreement from the report, or any kind of problem it lists, is missing.
@@ -96,7 +111,7 @@ The scripts enforce this order. The audit report can't be produced without your 
 
 ## Output
 - The same `_Graded.docx` / `_Graded.xlsx`, now carrying `Review Passed`, or `Review FAILED` plus every problem, in blue.
-- Final message: the verdict, the discrepancy list (if any), or a `RUBRIC CONCERN` (in which case the file was not marked).
+- Final message: the verdict, the discrepancy list (if any), or a `RUBRIC CONCERN` / `CELL RULE CONCERN` (in which case the file was not marked).
 - Severities follow the table in `SKILL.md`.
 
 ## Constraints
@@ -104,4 +119,4 @@ The scripts enforce this order. The audit report can't be produced without your 
 - Grade blind first. Never open the graded file's annotations, or anything the grader left, before committing `checker_blind.json`.
 - Single verification pass. Nothing is sent back to the grader.
 - If content is unreadable, give that question the verdict `unreadable` and compare against the grader's handling.
-- **Never calculate or write a total score/grade.** Verify only per-question verdicts; scoring is left to the human instructor.
+- **Never calculate or write a total score/grade.** Verify only per-question (or per-cell) verdicts; scoring is left to the human instructor.
