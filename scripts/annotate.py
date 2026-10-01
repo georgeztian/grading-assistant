@@ -123,6 +123,13 @@ def load_annotations(path: Path, question_ids: list[str], question_optional: boo
         text = LABEL_PREFIX_RE.sub("", str(a.get("text", ""))).strip()
         if not text:
             raise AnnotateError(f"{where}: 'text' (the explanation) is required")
+        mentioned = marks.answer_key_mentions(text)
+        if mentioned:
+            raise AnnotateError(
+                f"{where}: the explanation mentions {mentioned} — students have no access to the "
+                "rubric, solution or answer key, so never refer to them. State the correct answer "
+                "and working directly (e.g. 'The correct answer is …'); if the word is the "
+                "subject's own term, rephrase it")
         anchor = a.get("anchor")
         if not isinstance(anchor, str) or not anchor.strip():
             raise AnnotateError(f"{where}: 'anchor' is required")

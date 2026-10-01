@@ -42,6 +42,7 @@ Orchestrates the whole run:
 **Annotation convention** (applied by `annotate.py`; full rules in `grader.md`):
 - Documents: red feedback text immediately below the wrong answer.
 - Workbooks, graded **cell by cell**: every wrong cell is highlighted in Excel's "Bad" style (`FFC7CE` fill / `9C0006` font), with a red explanation in the closest empty cell. A cell is wrong only if its own formula is wrong, it holds a wrong typed value, or it is empty. A right formula whose number is off only because of an upstream error is never marked; the root cell's explanation names the cells that inherit the error.
+- **Annotations are student-facing**: they state the correct answer and working directly and never mention the rubric, solution or answer key, which students can't see. `annotate.py` refuses such wording, and `audit_graded.py` reports it as a `format_error`.
 - **Colors and mark wording are pinned exactly**: grader red `FF0000` (annotations and the `Grading Completed` mark), checker blue `0000FF` (`Review Passed` / `Review FAILED` and discrepancy text), with no variants or decoration.
 
 **Conceptual/explanation questions**: the rubric lists every key point each answer must cover. Graders and checkers check a student's answer against every one and name each missing point. Everyone uses the same list, so verdicts are consistent across students.
@@ -140,5 +141,5 @@ The scripts enforce that order, and `mark_review.py` won't mark a file without t
 | `incomplete_coverage` | Multi-part question not fully addressed | medium |
 | `cell_highlight_missing` | (.xlsx) A cell the cell rule says to mark is unmarked or has the other label, a correct / carried-over / `(not graded)` cell is marked, or a highlight is wrong or has no explanation beside it | medium |
 | `missing_keypoint_not_flagged` | Grader missed a key point absent from a conceptual answer, or flagged one that's actually present | medium |
-| `format_error` | Wrong color/mark wording, original student content altered, or a missing grading record/question tag | medium |
+| `format_error` | Wrong color/mark wording, original student content altered, a missing grading record/question tag, or an annotation that mentions the rubric/solution/answer key | medium |
 | `label_mismatch` | Both say "wrong", but one says INCORRECT and the other INCOMPLETE | low |

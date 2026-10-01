@@ -627,6 +627,11 @@ def main():
             if a.get("tag") is None:
                 report["problems"].append({"type": "format_error", "annotation": a["n"],
                                            "detail": "annotation has no question tag"})
+            mentioned = marks.answer_key_mentions(a.get("text"))
+            if mentioned:
+                report["problems"].append({"type": "format_error", "annotation": a["n"],
+                                           "detail": "annotation mentions the rubric, solution or "
+                                                     f"answer key, which students cannot see: {mentioned}"})
         if cell_mode:
             by_n = {m["n"]: m.get("question") for m in (meta or {}).get("annotations", [])}
             for a in report["annotations"]:

@@ -84,6 +84,7 @@ The scripts enforce this order. The audit report can't be produced without your 
 - Then, question by question (cell by cell for a workbook), also judge what the script can't:
   - **Annotation under the wrong answer?** Its `after` / `answer_cell` isn't where that question's answer is → `annotation_placement`.
   - **Explanation wrong, unclear or unspecific?** It doesn't state the correct answer and working, or doesn't pinpoint the student's actual error → `explanation_error`.
+  - **Explanation refers to what students can't see?** Any mention of the rubric, solution, answer key or its key points, or a rubric id, is a `format_error`. The script reports the obvious wording under `problems`; also flag indirect references it can't catch.
   - **Multi-part question only partly addressed** → `incomplete_coverage`.
   - **Workbook:** a JUDGE cell you decided differently from the grader is already a `comparison` row (`verdict_mismatch` / `label_mismatch`, keyed by its `cell`): list it with that type. The script already reports MARK / DO NOT MARK cells under `problems`.
   - **Workbook explanation:** it must give the correct formula/value and the exact fault, and name the downstream cells that inherit the error → otherwise `explanation_error`.

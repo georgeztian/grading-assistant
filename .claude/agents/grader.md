@@ -80,17 +80,18 @@ Then:
 **Conceptual/explanation/interpretation questions** (written-sentence answers):
 - The rubric's **Key points** list is the decomposition of what a complete answer must cover. Every grader and checker uses the same list, so verdicts are consistent across students.
 - Check the student's answer against **every** key point individually, not just for overall directional correctness.
-- If any key point is missing, even when the answer is otherwise coherent or reaches the right conclusion, the verdict is **INCOMPLETE**. The annotation must **name every missing key point** and why it matters. Never write a generic "explanation is incomplete".
+- If any key point is missing, even when the answer is otherwise coherent or reaches the right conclusion, the verdict is **INCOMPLETE**. The annotation must **state every missing point** in its own words and say why it matters, without calling it a "key point". Never write a generic "explanation is incomplete".
 - An answer that covers all key points is **correct** even if its phrasing differs from the solution. Grade substance, not wording.
 
-**Explanation quality.** Every annotation must be specific and grounded in the rubric's verbatim solution:
+**Explanation quality.** Every annotation must be specific, and its content must come from the rubric's verbatim solution:
 - State the correct answer and the reasoning or working that produces it.
 - Pinpoint what the student did wrong: the wrong input, formula, step or arithmetic, the misread question, the missing part.
-- For a workbook cell, give the correct formula and value from the solution and the exact fault in the student's formula or value. Then name the downstream cells that inherit the error; they are not marked.
+- For a workbook cell, give the correct formula and value and the exact fault in the student's formula or value. Then name the downstream cells that inherit the error; they are not marked.
+- **Never mention the rubric, the solution or the answer key.** Students can't see them. Don't write "the solution", "the rubric", "the answer key", "key point(s)", "model answer", "per the solution" or similar, and never cite rubric ids such as `[p12]`, which refer to the solutions file. State the correct answer and working directly, in your own voice. `annotate.py` refuses any explanation containing such wording; if the word is the subject's own term (e.g. a chemical solution), rephrase it.
 - Formats:
-  - `INCORRECT`: "The correct answer is [X] because [working from the solution]. Your answer [Y] is wrong because [specific error]."
+  - `INCORRECT`: "The correct answer is [X] because [the working]. Your answer [Y] is wrong because [specific error]."
   - `INCOMPLETE`: "[What is missing]. [Guidance toward the complete answer]."
-  - conceptual `INCOMPLETE`: "Missing key point(s): [each specific point]. [Why each matters / what a complete answer adds]."
+  - conceptual `INCOMPLETE`: "Your answer does not address: [each missing point, stated specifically]. [Why each matters / what a complete answer adds]."
 
 ### Step 4: Write the graded file (script, not hand-written code)
 1. Write your verdicts to `<work_dir>/verdicts.json` (with the Write tool), one entry per incorrect/incomplete answer (per cell, for a workbook) and none for correct answers:

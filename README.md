@@ -93,6 +93,8 @@ If two students hand in byte-identical files (a copied submission, or an untouch
 - An explanation is written in red into the closest empty, visible cell (right, then below, then further out). Existing cell content is never overwritten, and hidden rows/columns are skipped.
 - A dedicated **"Grading Summary"** tab (the last sheet) carries `Grading Completed` (red) and, once checked, `Review Passed` / `Review FAILED` (blue), plus a table of any discrepancies.
 
+**Student-facing wording:** annotations never mention the rubric, solution or answer key, because students have no access to them. Each annotation states the correct answer and working directly. The annotation script refuses such wording, and the checker's audit flags any that gets through.
+
 **No total score:** no agent calculates or writes a total score/grade. Only per-question (per-cell for spreadsheets) verdicts and explanations are recorded; totaling a grade is left to you.
 
 ### Spreadsheets: graded cell by cell

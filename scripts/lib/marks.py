@@ -6,6 +6,8 @@ mark_review.py) and reader (audit_graded.py) uses the same values.
 """
 from __future__ import annotations
 
+import re
+
 GRADER_RED = "FF0000"
 CHECKER_BLUE = "0000FF"
 BAD_FILL = "FFC7CE"   # Excel "Bad" cell style: light red fill ...
@@ -19,6 +21,22 @@ SUMMARY_SHEET = "Grading Summary"
 
 # Labels a grader annotation may carry ("partial" is annotated as INCOMPLETE).
 VERDICT_LABELS = ("INCORRECT", "INCOMPLETE")
+
+# Annotations are read by students, who never see the solutions file or the
+# answer key built from it, so feedback must state the correct answer and
+# working in its own words and never point at those documents. annotate.py
+# refuses such wording and audit_graded.py reports it.
+ANSWER_KEY_WORDING_RE = re.compile(
+    r"\b(?:rubrics?|solutions?|answer[\s-]*keys?|key[\s-]*points?|"
+    r"(?:marking|grading)\s+(?:schemes?|guides?|notes?)|"
+    r"(?:model|reference|official|sample)\s+answers?)\b", re.I)
+
+
+def answer_key_mentions(text: str) -> list[str]:
+    """Words in student-facing feedback that mention the rubric, solution or
+    answer key (empty when there are none)."""
+    return sorted({m.group(0).lower() for m in ANSWER_KEY_WORDING_RE.finditer(text or "")})
+
 
 DISCREPANCY_TYPES = (
     "verdict_mismatch",

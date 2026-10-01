@@ -241,6 +241,9 @@ formatting and images all survive. With neither:
   - It needs the verified rubric, and every annotation's `question` must be
     one of its ids. For a workbook cell `question` may be omitted; the cell's
     rubric question is recorded.
+  - Explanations are student-facing. It refuses any that mention the
+    rubric, solution, answer key or key points
+    (`marks.answer_key_mentions`), since students can't see them.
   - Documents: red `FF0000` paragraphs immediately below their `pN` / `tN` /
     `sN` anchor (or inside a `tN:rRcC` table cell), then the exact
     `Grading Completed` mark.
@@ -288,7 +291,8 @@ formatting and images all survive. With neither:
     - `problems`: altered or deleted student content, wrong colour shade, a
       reworded or misplaced mark, a highlight without an annotation, an
       annotation not in the closest empty visible cell, a missing question
-      tag, `outdated_rubric`, and, for a workbook, every break of the cell
+      tag, an annotation that mentions the rubric/solution/answer key,
+      `outdated_rubric`, and, for a workbook, every break of the cell
       rule (`cell_highlight_missing`).
 - **`mark_review.py <graded> passed | failed <discrepancies.json> --submission <submission>`**
   writes the checker's exact blue `0000FF` `Review Passed` / `Review FAILED`,
