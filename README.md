@@ -167,3 +167,7 @@ Known limitations:
 - [`.claude/skills/grading-instructions/extraction-fallback.md`](.claude/skills/grading-instructions/extraction-fallback.md) — manual extraction and image-inspection methods
 - [`scripts/README.md`](scripts/README.md) — the toolkit: what each script does, the cache, how to extend it
 - [`CLAUDE.md`](CLAUDE.md) — quick-reference project rules
+
+## License
+
+This project is licensed under the [Apache License 2.0](LICENSE).
