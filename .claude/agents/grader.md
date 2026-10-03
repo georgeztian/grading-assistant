@@ -46,7 +46,7 @@ Grade one submission (.doc, .docx, .pdf, .xlsx, or .xls) against the homework's 
   - Never conclude an answer is missing without checking that content.
   - How to inspect each format: `.claude/skills/grading-instructions/extraction-fallback.md`. Open it only when needed.
 - Check the view's `summary` line for plausibility (e.g. `equations_found=0` on a math-heavy homework). If the view looks wrong or incomplete, use the manual method in `extraction-fallback.md` for that one file.
-- If `extract.py` errors (`no_converter`, `unsupported file type`, `unreadable: …`), the submission is **unreadable**. Don't guess at its content. Report it as unreadable in your final message and create no graded file.
+- If `extract.py` errors (`no_converter`, `conversion_failed`, `unsupported file type`, `unreadable: …`), the submission is **unreadable**. Don't guess at its content. Report it as unreadable in your final message and create no graded file.
 - **Spreadsheets:** also run `.venv/Scripts/python scripts/compare_xlsx.py <submission_file> <solutions_file>` (see Step 3, *Workbooks*).
 
 ### Step 3: Compare & evaluate

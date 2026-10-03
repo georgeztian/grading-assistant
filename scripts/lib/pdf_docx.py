@@ -1,9 +1,9 @@
 """Rebuild a PDF as a plain .docx, deterministically.
 
-A PDF submission is graded into a `_Graded.docx`, which previously meant the
-grader retyping the whole document through python-docx by hand — expensive in
-output tokens and a chance to silently drop or alter student content. This
-builds that base document once, in code, from PyMuPDF's layout analysis:
+A PDF submission is graded into a `_Graded.docx`. Rather than have a grader
+retype the document by hand (expensive in output tokens, and a chance to
+silently drop or alter student content), this builds that base document
+once, in code, from PyMuPDF's layout analysis:
 
 - each text line becomes one paragraph (bold/italic spans kept) — PyMuPDF
   text blocks often span several questions, and a line is the finest unit an
@@ -47,14 +47,16 @@ BAND_TOLERANCE = 2.0  # points
 MIN_GRAPHIC_SIDE = 40.0
 MIN_GRAPHIC_AREA = 3000.0
 GRAY_GRAPHIC_PATHS = 8
+LABEL_MARGIN = 24.0  # points around a graphic searched for its labels
+LABEL_MAX_CHARS = 40
 
 
 def _colored(color) -> bool:
     return bool(color) and len(color) >= 3 and max(color) - min(color) >= 0.15
 
 
-LABEL_MARGIN = 24.0  # points around a graphic searched for its labels
-LABEL_MAX_CHARS = 40
+def _line_text(line) -> str:
+    return "".join(span["text"] for span in line["spans"])
 
 
 def _with_labels(page, rect):
@@ -72,7 +74,7 @@ def _with_labels(page, rect):
         halo = pymupdf.Rect(region.x0 - LABEL_MARGIN, region.y0 - LABEL_MARGIN,
                             region.x1 + LABEL_MARGIN, region.y1 + LABEL_MARGIN)
         for line in lines:
-            if line.intersects(halo) and not line in region:
+            if line.intersects(halo) and line not in region:
                 region |= line
                 grown = True
     return region & page.rect
@@ -102,10 +104,6 @@ def graphic_regions(page) -> tuple[list, bool]:
                  or d.get("color")) >= GRAY_GRAPHIC_PATHS:
             flagged = True
     return pictured, flagged
-
-
-def _line_text(line) -> str:
-    return "".join(span["text"] for span in line["spans"])
 
 
 def _page_items(page) -> list[dict]:

@@ -49,7 +49,9 @@ WORK_DIR = REPO_ROOT / ".cache" / "work"
 # v11: records name no file (shared by identical submissions); views are per
 #      file path; conversions/PDF bases have content-neutral names.
 # v12: an xlsx text cell starting with "=" is text, not a formula.
-SCHEMA_VERSION = 12
+# v13: a converted .doc/.xls record keeps only the original's extension
+#      (`converted_from`), never the path of whoever extracted it first.
+SCHEMA_VERSION = 13
 
 _sha_memo: dict[tuple, str] = {}
 

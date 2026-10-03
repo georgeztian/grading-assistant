@@ -52,9 +52,9 @@ def extract_any(path: Path) -> dict:
 
     if ext == ".doc":
         converted = convert_doc.convert(path, cache.CONVERTED_DIR, "docx")
-        # -> .cache/converted/<sha256>/<stem>.docx (Word via COM, or LibreOffice)
+        # -> .cache/converted/<sha256>/converted.docx (Word via COM, or LibreOffice)
         record = extract_docx.extract_docx(converted, image_dir)
-        record["converted_from"] = str(path)
+        record["converted_from"] = ext  # the record is shared: no file name
         record["converter_output_path"] = str(converted)
 
         heuristic = detect_doc_images(path)
@@ -97,7 +97,7 @@ def extract_any(path: Path) -> dict:
                 "copy can only be rebuilt from values. Install Excel or LibreOffice for full fidelity."))
             return record
         record = extract_xlsx.extract_xlsx(converted, image_dir)
-        record["converted_from"] = str(path)
+        record["converted_from"] = ext
         record["converter_output_path"] = str(converted)
         return record
 

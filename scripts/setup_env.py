@@ -8,8 +8,8 @@ Run once per machine with any Python 3 interpreter:
 Stdlib only, so it works before any dependency is installed. Idempotent:
 re-running reuses an existing `.venv/` and just re-syncs `requirements.txt`
 into it. Every other script in `scripts/` — and any ad hoc Python an agent
-writes — must then run with the venv's interpreter: `.venv/Scripts/python` on Windows, `.venv/bin/python` on
-macOS/Linux (see `_venv.py`).
+writes — must then run with the venv's interpreter: `.venv/Scripts/python`
+on Windows, `.venv/bin/python` on macOS/Linux (see `_venv.py`).
 
 Because this project lives in a Dropbox folder, the new `.venv/` is marked
 "ignored" for Dropbox sync (a best-effort no-op when Dropbox isn't in use),
@@ -55,13 +55,13 @@ def main() -> int:
     py = venv_python()
     if py.exists():
         print(f"Reusing existing environment: {VENV_DIR}")
+        mark_dropbox_ignored(VENV_DIR)
     else:
         print(f"Creating environment: {VENV_DIR}")
-        VENV_DIR.mkdir()
+        VENV_DIR.mkdir(exist_ok=True)
         # Mark before populating so Dropbox never starts uploading it.
         mark_dropbox_ignored(VENV_DIR)
         venv.EnvBuilder(with_pip=True).create(VENV_DIR)
-    mark_dropbox_ignored(VENV_DIR)
 
     subprocess.run([str(py), "-m", "pip", "install", "--upgrade", "pip", "--quiet"], check=True)
     subprocess.run([str(py), "-m", "pip", "install", "-r", str(REQUIREMENTS)], check=True)

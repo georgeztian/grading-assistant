@@ -17,7 +17,6 @@ rubric (rubric.py) and annotation anchors (annotate.py):
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from lib.cache import rel_path
 
@@ -215,7 +214,7 @@ def render_units(record: dict, selected: list[dict], indent: str = "",
 def render_view(record: dict, label: str) -> str:
     kind = record["type"]
     if record.get("converted_from"):
-        kind += f" (converted from {Path(record['converted_from']).suffix.lower()})"
+        kind += f" (converted from {record['converted_from']})"
     lines = [f"# Extraction view: {label}  [{kind}]"]
     if is_sheet_record(record):
         lines.append("# ids: <Sheet>!<Cell>. Cells shown as `A1: value` or `A1: =formula -> cached value`. "

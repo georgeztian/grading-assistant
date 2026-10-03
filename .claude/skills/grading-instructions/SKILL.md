@@ -94,6 +94,7 @@ A concern comes either from the rubric-checker's `hold`, or from a grader or che
 Every graded file records which verified rubric it was graded against. Whenever a rubric is rebuilt after grading has begun, and always before your final summary, run `rubric.py graded <solutions_file> <graded folder>` for each homework.
 - **`outdated`** files were graded against an older answer key, or against an earlier version of a solutions file that has since been corrected in place. Regrade them: delete the old graded file and run the grader again.
 - If an outdated file already carries a checker review, ask the user first, since deleting it discards that review.
+- **`pending`** files were graded against the current answer key, which can't be used right now (on hold, or changed and not yet rebuilt). Don't delete them. Run `graded` again once the key is verified; they then turn out up to date or outdated.
 - **`no_record`** files were made outside this workflow; tell the user.
 
 ## Concurrent Workflow Overview

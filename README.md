@@ -1,4 +1,4 @@
-# Grading Assistant
+# AI Grading Assistant
 
 An AI-agent-based system for grading student homework submissions. For each homework, a verified **answer key** is built once from the solution file. Independent **grader** and **checker** agents then grade every submission against it and produce annotated copies with color-coded feedback, without ever touching the original student files.
 
@@ -49,8 +49,7 @@ requirements.txt          # Python dependencies for scripts/ (installed into .ve
 CLAUDE.md                 # Quick-reference project rules
 ```
 
-The three data folders (`reference-solutions/`, `student-submissions/`, `graded-submissions/`) are git-ignored. Their contents stay on your machine and are never committed or pushed, since they hold student work. Only a `.gitkeep` in each is tracked, so the folders exist after cloning. 
-`.cache/` and `.venv/` are also git-ignored. Both are safe to delete and rebuild. Deleting `.cache/rubrics/` means each homework's answer key is rebuilt and re-verified on the next run.
+The three data folders (`reference-solutions/`, `student-submissions/`, `graded-submissions/`) are git-ignored since they hold student work. Only a `.gitkeep` in each is tracked, so the folders exist after cloning. `.cache/` and `.venv/` are also git-ignored. Both are safe to delete and rebuild. Deleting `.cache/rubrics/` means each homework's answer key is rebuilt and re-verified on the next run.
 
 ### Optional per-homework subfolders
 

@@ -143,9 +143,11 @@ formatting and images all survive. With neither:
 - **`convert_doc.py <file.doc|file.xls>`** runs the converter chain above.
   The Office conversion runs in a child process with a timeout (a stuck
   dialog can't hang an agent), with macros force-disabled and the file
-  opened read-only. Conversions are serialized across agents by a lock
-  file and cached at `.cache/converted/<sha256>/converted.<ext>` (named by
-  content, never after a student's file).
+  opened read-only. It is late-bound, so a half-written pywin32 cache
+  (`%TEMP%/gen_py`, left by any program) can't break it. Conversions are
+  serialized across agents by a lock file and cached at
+  `.cache/converted/<sha256>/converted.<ext>` (named by content, never
+  after a student's file).
 
 ### Answer key
 - **`rubric.py <command> <solutions> …`** manages the per-solutions-file
@@ -178,17 +180,24 @@ formatting and images all survive. With neither:
       holding a not-yet-approved rubric; a hold while already on hold adds
       to the outstanding concerns). `release --note "…"` records the user's
       decision and makes it verified again.
-    - Any later change to the map, the rubric file, the solutions file or
-      the extraction version makes it stale (as does a missing `map.json`).
-      A rebuild keeps it verified only if the map is unchanged and the
-      rubric text comes out identical; otherwise it needs a fresh review.
+    - Any later change to the map, the rubric file or the extraction
+      version makes it stale (as does a missing `map.json`). A rebuild keeps
+      it verified only if the map is unchanged and the rubric text comes out
+      identical; otherwise it needs a fresh review. A changed solutions file
+      is new content, so it gets a rubric of its own (state `new`).
   - `path` prints `rubric.md` and the question ids **only** while the rubric
     is verified, unchanged and not on hold. Graders, checkers, `annotate.py`
     and `audit_graded.py` gate on it.
-  - `graded <graded_dir>` lists graded files whose recorded answer key is
-    not the current verified one, including files graded against an earlier
-    version of a solutions file corrected in place (same path), with exit 1
-    if any, so outdated grading is found after a key changes.
+  - `graded <graded_dir>` checks every graded file made from this solutions
+    file against its answer key, so outdated grading is found after a key
+    changes (exit 1 if any is outdated):
+    - `outdated`: graded against a rubric text that has since been rebuilt
+      differently, or against an earlier version of a solutions file
+      corrected in place (same path);
+    - `pending`: graded against the rubric as it stands while it can't be
+      used (on hold, or changed and not yet rebuilt). They stand or become
+      outdated once it is verified again;
+    - `no_record`: made outside this workflow.
 
 ### Grading output
 - **`compare_xlsx.py <submission> <solutions> [--json]`** grades a workbook

@@ -11,16 +11,17 @@ extraction record. A workbook is graded cell by cell (compare_xlsx.py), so its
 map also settles which cells are graded: every cell in a section is, except
 those listed in `ungraded_blocks` (notes and labels students aren't asked to
 produce, kept in the rubric as context). Its sections restate no answers (the
-verbatim cells are the key) and give tolerances machine-readably. The script also refuses any map that leaves a non-empty
-paragraph/table/cell/text box of the solutions file unassigned, so nothing
-can be silently dropped.
+verbatim cells are the key) and give tolerances machine-readably. The script
+also refuses any map that leaves a non-empty paragraph/table/cell/text box of
+the solutions file unassigned, so nothing can be silently dropped.
 
 Verification: an independent rubric checker compares the rubric against the
 raw solutions and records a per-question review (review.json) — `approve`
 refuses without one covering every question. Only an approved rubric is
 served to graders (`path` fails otherwise); any change to the map, the
-rubric, the solutions file or the extraction version afterwards makes it
-stale until rebuilt (and re-reviewed if its text changed).
+rubric or the extraction version afterwards makes it stale until rebuilt
+(and re-reviewed if its text changed). A changed solutions file is new
+content, so it starts over with a rubric of its own (state `new`).
 
 A concern about the *official solution itself* (not the rubric) puts the
 rubric `on_hold`: nothing is graded against it until the user decides and
@@ -85,10 +86,6 @@ class RubricError(Exception):
 
 def now() -> str:
     return datetime.datetime.now().isoformat(timespec="seconds")
-
-
-def file_sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def rubric_dir(solutions: Path) -> Path:
@@ -418,7 +415,7 @@ def cmd_build(solutions: Path) -> None:
 
     status = load_status(d)
     sol_sha = cache.sha256_of(solutions)
-    map_sha = file_sha(map_file)
+    map_sha = cache.sha256_of(map_file)
     # A new round: first build, a correction after rejection, or a change made
     # after the user's decision on a hold (all need a fresh review).
     if status["state"] in ("new", "rejected", "on_hold"):
@@ -433,7 +430,7 @@ def cmd_build(solutions: Path) -> None:
         # Same content as approved — (re)write it in case the file on disk
         # was altered, and adopt the current extraction version: the approval
         # still applies byte for byte.
-        if not rubric_file.exists() or file_sha(rubric_file) != rubric_sha:
+        if not rubric_file.exists() or cache.sha256_of(rubric_file) != rubric_sha:
             cache.write_text_atomic(rubric_file, text)
         if status.get("schema_version") != cache.SCHEMA_VERSION:
             status["schema_version"] = cache.SCHEMA_VERSION
@@ -459,18 +456,18 @@ def cmd_build(solutions: Path) -> None:
           "next": "an independent rubric-checker must review it (approve/reject) before grading"})
 
 
-def _check_unchanged(d: Path, status: dict, solutions: Path) -> str | None:
+def _check_unchanged(d: Path, status: dict) -> str | None:
+    """Why an approved rubric no longer holds, or None. (The solutions file
+    can't have changed: its content hash names the rubric directory.)"""
     rubric_file = d / "rubric.md"
     if not rubric_file.exists():
         return "rubric.md is missing"
-    if file_sha(rubric_file) != status.get("rubric_sha256"):
+    if cache.sha256_of(rubric_file) != status.get("rubric_sha256"):
         return "rubric.md changed after it was built (edited by hand?) — rebuild it"
     if not (d / "map.json").exists():
         return "map.json is missing — rebuild it (rubric-builder), then re-review"
-    if file_sha(d / "map.json") != status.get("map_sha256"):
+    if cache.sha256_of(d / "map.json") != status.get("map_sha256"):
         return "map.json changed after the last build — rebuild, then re-review"
-    if cache.sha256_of(solutions) != status.get("solutions_sha256"):
-        return "solutions file changed"
     if status.get("schema_version") != cache.SCHEMA_VERSION:
         return ("extraction changed since the build (schema "
                 f"{status.get('schema_version')} -> {cache.SCHEMA_VERSION}) — rebuild; it stays "
@@ -488,12 +485,12 @@ def verified_rubric(solutions: Path) -> dict:
     d = rubric_dir(solutions)
     status = load_status(d)
     if status["state"] == "on_hold":
-        raise RubricError(f"rubric for {solutions} is ON HOLD pending the user's decision on a "
+        raise RubricError(f"rubric for {cache.rel_path(solutions)} is ON HOLD pending the user's decision on a "
                           f"solution concern ({status.get('last_concerns')}) — do not grade")
     if status["state"] != "verified":
-        raise RubricError(f"rubric for {solutions} is not verified (state: {status['state']!r}) — "
+        raise RubricError(f"rubric for {cache.rel_path(solutions)} is not verified (state: {status['state']!r}) — "
                           "do not grade against it; the orchestrator must build and verify it first")
-    problem = _check_unchanged(d, status, solutions)
+    problem = _check_unchanged(d, status)
     if problem:
         raise RubricError(f"rubric is stale: {problem} — do not grade against it")
     return {"path": str(d / "rubric.md"), "rubric_sha256": status["rubric_sha256"],
@@ -557,7 +554,7 @@ def cmd_approve(solutions: Path, review_file: Path) -> None:
     status = load_status(d)
     if status["state"] != "unverified":
         emit({"error": f"can only approve a freshly built rubric (state is {status['state']!r})"}, 1)
-    problem = _check_unchanged(d, status, solutions)
+    problem = _check_unchanged(d, status)
     if problem:
         emit({"error": problem}, 1)
     try:
@@ -659,7 +656,7 @@ def cmd_release(solutions: Path, note: str) -> None:
         emit({"error": f"nothing to release (state is {status['state']!r})"}, 1)
     if not note.strip():
         emit({"error": "--note must record the user's decision"}, 1)
-    problem = _check_unchanged(d, status, solutions)
+    problem = _check_unchanged(d, status)
     if problem:
         emit({"error": f"{problem} — rebuild and re-review instead of releasing"}, 1)
     status.update({"state": "verified", "released_at": now()})
@@ -673,7 +670,7 @@ def cmd_status(solutions: Path) -> None:
     status = load_status(d)
     out = {"rubric_dir": str(d), **{k: v for k, v in status.items() if k != "history"}}
     if status["state"] == "verified":
-        problem = _check_unchanged(d, status, solutions)
+        problem = _check_unchanged(d, status)
         if problem:
             out["state"] = "stale"
             out["problem"] = problem
@@ -690,18 +687,25 @@ def cmd_path(solutions: Path) -> None:
 
 
 def cmd_graded(solutions: Path, graded_dir: Path) -> None:
-    """Graded files made from this solutions file whose recorded rubric is
-    not the current verified one — they were graded against an older (or
-    since-held) answer key, or an earlier version of this solutions file
-    (same path, since corrected), and must be regraded or reviewed by hand."""
+    """Graded files made from this solutions file, checked against its
+    answer key:
+    - outdated: graded against a rubric text that has since been rebuilt
+      differently, or against an earlier version of this solutions file
+      (same path, since corrected) — regrade them;
+    - pending: graded against the rubric as it stands, but that rubric can't
+      be used right now (on hold, or changed and not yet rebuilt) — whether
+      they stand is settled once it is verified again;
+    - up_to_date: graded against the current verified rubric."""
     from lib import marks
     sol_sha = cache.sha256_of(solutions)
     sol_file = cache.rel_path(solutions)
+    built = load_status(rubric_dir(solutions)).get("rubric_sha256")  # verified or not
     try:
-        current = verified_rubric(solutions)["rubric_sha256"]
+        verified_rubric(solutions)
+        why = None
     except RubricError as exc:
-        current, why = None, str(exc)
-    outdated, current_ok, unrecorded = [], [], []
+        why = str(exc)
+    outdated, pending, current_ok, unrecorded = [], [], [], []
     for f in sorted(graded_dir.rglob("*_Graded.*")):
         if f.suffix.lower() not in (".docx", ".xlsx") or f.name.startswith("~$"):
             continue
@@ -713,11 +717,13 @@ def cmd_graded(solutions: Path, graded_dir: Path) -> None:
             if meta.get("solutions_file") == sol_file:  # graded against the file before a correction
                 outdated.append(cache.rel_path(f))
             continue
-        (current_ok if meta.get("rubric_sha256") == current else outdated).append(cache.rel_path(f))
-    out = {"current_rubric": current[:16] if current else None, "outdated": outdated,
-           "up_to_date": len(current_ok),
-           "no_record": unrecorded}
-    if current is None:
+        if built is not None and meta.get("rubric_sha256") != built:
+            outdated.append(cache.rel_path(f))
+        else:
+            (pending if why else current_ok).append(cache.rel_path(f))
+    out = {"current_rubric": None if why else built[:16], "outdated": outdated,
+           "up_to_date": len(current_ok), "pending": pending, "no_record": unrecorded}
+    if why:
         out["note"] = f"no usable rubric right now: {why}"
     emit(out, 1 if outdated else 0)
 
@@ -729,17 +735,16 @@ def main():
     parser.add_argument("command", choices=["init", "build", "approve", "reject", "hold",
                                             "release", "status", "path", "graded"])
     parser.add_argument("solutions", type=Path)
-    parser.add_argument("files", type=Path, nargs="*",
-                        help="approve: review.json · reject: issues.json · "
-                             "hold: concerns.json [review.json] · graded: graded dir")
+    files_help = ("approve: review.json · reject: issues.json · "
+                  "hold: concerns.json [review.json] · graded: graded dir")
+    parser.add_argument("files", type=Path, nargs="*", help=files_help)
     parser.add_argument("--note", default="", help="release: the user's decision, recorded")
     args = parser.parse_args()
 
     if not args.solutions.exists():
         emit({"error": f"file not found: {args.solutions}"}, 1)
-    needs = {"approve": 1, "reject": 1, "hold": 1, "graded": 1}
-    if len(args.files) < needs.get(args.command, 0):
-        emit({"error": f"{args.command} needs: " + parser._actions[3].help}, 1)
+    if args.command in ("approve", "reject", "hold", "graded") and not args.files:
+        emit({"error": f"{args.command} needs: {files_help}"}, 1)
     simple = {"init": cmd_init, "build": cmd_build, "status": cmd_status, "path": cmd_path}
     try:
         if args.command in simple:

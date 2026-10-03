@@ -51,11 +51,10 @@ from pathlib import Path
 import _venv  # noqa: F401  — must precede third-party imports (re-runs under .venv)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib import formula_eval, views  # noqa: E402
-from lib.views import fmt_value  # noqa: E402
-import rubric  # noqa: E402
 from openpyxl.utils.cell import coordinate_to_tuple  # noqa: E402
+from lib import formula_eval, views  # noqa: E402
 import extract  # noqa: E402
+import rubric  # noqa: E402
 
 DEFAULT_TOLERANCE = 1e-4
 MARK = {"formula_incorrect": "INCORRECT", "value_incorrect": "INCORRECT",
@@ -66,11 +65,6 @@ RULE = ("Rule: mark a cell only if its own formula is wrong or it holds a wrong 
         "(INCORRECT), or it is empty (INCOMPLETE). A correct formula whose number is wrong only "
         "because of an upstream error is NOT marked. Mark every wrong cell, not one per question.")
 NUMERIC_TEXT_RE = re.compile(r"^\s*\$?\s*(-?[0-9][0-9,]*\.?[0-9]*(?:[eE][-+]?[0-9]+)?)\s*(%?)\s*$")
-
-
-def get_workbook_record(path: Path) -> dict:
-    """The same cached record extract.py produces."""
-    return extract.get_record(path)[0]
 
 
 def is_plain_number(value) -> bool:
@@ -104,10 +98,10 @@ def numeric_text(value) -> float | None:
 
 
 def rubric_cells(solutions: Path, record: dict) -> tuple[dict, set, dict, str | None]:
-    """From the verified rubric: cell id -> numeric_tolerance, the cell ids
+    """From the verified rubric: (cell id -> numeric_tolerance, the cell ids
     not graded (excluded, or `ungraded_blocks`: notes/labels kept only as
-    context), cell id -> question id, and None. Without a usable rubric:
-    empty, and the reason."""
+    context), cell id -> question id, None). Without a usable rubric: empty
+    ones, and the reason it can't be used."""
     try:
         rubric.verified_rubric(solutions)
     except rubric.RubricError as exc:
@@ -290,8 +284,8 @@ def compare_workbooks(submission_record: dict, solution_record: dict,
 def grade_cells(submission: Path, solutions: Path, tolerance: float = DEFAULT_TOLERANCE) -> dict:
     """compare_workbooks for two workbook files, with the verified rubric's
     tolerances and exclusions."""
-    submission_record = get_workbook_record(submission)
-    solution_record = get_workbook_record(solutions)
+    submission_record = extract.get_record(submission)[0]
+    solution_record = extract.get_record(solutions)[0]
     tolerances, excluded, question_of, rubric_error = rubric_cells(solutions, solution_record)
     result = compare_workbooks(submission_record, solution_record, tolerance, tolerances,
                                excluded, question_of)
@@ -330,7 +324,7 @@ def describe(r: dict) -> str:
 
 
 def _short(value, limit: int = 80) -> str:
-    text = fmt_value(value)
+    text = views.fmt_value(value)
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 

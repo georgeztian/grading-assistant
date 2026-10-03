@@ -11,7 +11,8 @@ Converters, in order of preference (first one installed wins):
 1. Microsoft Word / Excel via COM (Windows) — the native applications, so
    the conversion is exact. Runs in a child process with a timeout (a stuck
    dialog can't hang the caller), with macros force-disabled and files
-   opened read-only. Needs pywin32 (in requirements.txt on Windows).
+   opened read-only, late-bound so a broken pywin32 cache can't break it.
+   Needs pywin32 (in requirements.txt on Windows).
 2. LibreOffice (`soffice --headless`) — on PATH or in its standard install
    location; the option on macOS/Linux.
 If neither is available this raises a clear `no_converter` error instead of
@@ -113,8 +114,10 @@ class _Lock:
                     if time.time() - self.path.stat().st_mtime > LOCK_TIMEOUT:
                         self.path.unlink()
                         continue
-                except OSError:
+                except FileNotFoundError:  # released meanwhile
                     continue
+                except OSError:  # briefly locked by a sync client / scanner
+                    pass
                 if time.time() > deadline:
                     raise RuntimeError("conversion_failed: timed out waiting for the conversion lock")
                 time.sleep(0.5)
@@ -133,11 +136,23 @@ def _office_worker(src: str, dst: str, target_ext: str) -> None:
     macros disabled and save it as OOXML to `dst`."""
     import pythoncom
     import win32com.client
+    from win32com.client import gencache
+
+    # Late binding only. Early-bound wrappers come from pywin32's makepy
+    # cache (%TEMP%/gen_py), which any program, or a conversion killed by
+    # the timeout, can leave half-written. Every later Dispatch then raises,
+    # and every .doc/.xls would be reported unreadable.
+    gencache.GetClassForCLSID = lambda clsid: None
+
+    def new_instance(progid: str):
+        # A new instance (not the user's open Word/Excel).
+        return win32com.client.Dispatch(pythoncom.CoCreateInstanceEx(
+            progid, None, pythoncom.CLSCTX_SERVER, None, (pythoncom.IID_IDispatch,))[0], progid)
 
     pythoncom.CoInitialize()
     try:
         if target_ext == "docx":
-            app = win32com.client.DispatchEx("Word.Application")
+            app = new_instance("Word.Application")
             try:
                 app.Visible = False
                 app.DisplayAlerts = 0  # wdAlertsNone
@@ -152,7 +167,7 @@ def _office_worker(src: str, dst: str, target_ext: str) -> None:
             finally:
                 app.Quit()
         else:
-            app = win32com.client.DispatchEx("Excel.Application")
+            app = new_instance("Excel.Application")
             try:
                 app.Visible = False
                 app.DisplayAlerts = False
@@ -172,31 +187,31 @@ def _office_worker(src: str, dst: str, target_ext: str) -> None:
         pythoncom.CoUninitialize()
 
 
-def _convert_office(path: Path, tmp: Path, target_ext: str) -> None:
+def _convert_office(src: Path, dst: Path, target_ext: str, label: str) -> None:
     cmd = [sys.executable, str(Path(__file__).resolve()), "--office-worker",
-           str(path.resolve()), str(tmp.resolve()), target_ext]
+           str(src.resolve()), str(dst.resolve()), target_ext]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=OFFICE_TIMEOUT)
     except subprocess.TimeoutExpired:
-        raise RuntimeError(f"conversion_failed: Microsoft Office timed out on {path.name} "
+        raise RuntimeError(f"conversion_failed: Microsoft Office timed out on {label} "
                            "(a dialog, password or repair prompt?)")
-    if proc.returncode != 0 or not tmp.exists():
+    if proc.returncode != 0 or not dst.exists():
         detail = (proc.stderr or proc.stdout or "").strip().splitlines()[-1:] or ["no output"]
-        raise RuntimeError(f"conversion_failed: Microsoft Office could not convert {path.name}: "
+        raise RuntimeError(f"conversion_failed: Microsoft Office could not convert {label}: "
                            f"{detail[0]}")
 
 
 # -------------------------------------------------------------- LibreOffice
 
-def _convert_soffice(path: Path, tmp_dir: Path, target_ext: str) -> Path:
+def _convert_soffice(src: Path, out_dir: Path, target_ext: str, label: str) -> Path:
     converter = find_soffice()
     try:
         subprocess.run([converter, "--headless", "--convert-to", target_ext,
-                        "--outdir", str(tmp_dir), str(path)],
+                        "--outdir", str(out_dir), str(src)],
                        check=True, capture_output=True, timeout=SOFFICE_TIMEOUT)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        raise RuntimeError(f"conversion_failed: {converter} failed on {path.name}: {exc}") from exc
-    produced = tmp_dir / f"{path.stem}.{target_ext}"
+        raise RuntimeError(f"conversion_failed: {converter} failed on {label}: {exc}") from exc
+    produced = out_dir / f"{src.stem}.{target_ext}"
     if not produced.exists():
         raise RuntimeError(f"conversion_failed: {converter} did not produce {produced.name}")
     return produced
@@ -233,14 +248,19 @@ def convert(path: Path, out_dir: Path, target_ext: str | None = None) -> Path:
             return target
         target_dir.mkdir(parents=True, exist_ok=True)
         for name in converters:
-            work = target_dir / f".tmp-{os.getpid()}-{name}"
+            # A short work folder and neutral names: Word/Excel refuse a path
+            # over 255 characters, which a student's long file name could
+            # otherwise push the input or output past.
+            work = out_dir / f".tmp-{os.getpid()}-{name}"
             work.mkdir(exist_ok=True)
             try:
+                src = work / f"source{path.suffix.lower()}"
+                shutil.copyfile(path, src)
                 if name == "office":
-                    produced = work / f"{path.stem}.{target_ext}"
-                    _convert_office(path, produced, target_ext)
+                    produced = work / f"converted.{target_ext}"
+                    _convert_office(src, produced, target_ext, path.name)
                 else:
-                    produced = _convert_soffice(path, work, target_ext)
+                    produced = _convert_soffice(src, work, target_ext, path.name)
                 cache.replace_with_retry(produced, target)
                 return target
             except RuntimeError as exc:

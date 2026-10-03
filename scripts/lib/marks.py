@@ -6,7 +6,10 @@ mark_review.py) and reader (audit_graded.py) uses the same values.
 """
 from __future__ import annotations
 
+import json
 import re
+import zipfile
+from pathlib import Path
 
 GRADER_RED = "FF0000"
 CHECKER_BLUE = "0000FF"
@@ -68,7 +71,6 @@ FMTID = "{D5CDD505-2E9C-101B-9397-08002B2CF9AE}"
 
 
 def _chunks(meta: dict) -> list[tuple[str, str]]:
-    import json
     raw = json.dumps(meta, ensure_ascii=False, separators=(",", ":"))
     return [(f"{META_NAME}.{i + 1}", raw[i * META_CHUNK:(i + 1) * META_CHUNK])
             for i in range((len(raw) + META_CHUNK - 1) // META_CHUNK)]
@@ -115,8 +117,6 @@ def write_meta_xlsx(workbook, meta: dict) -> None:
 
 def read_meta(graded_file) -> dict | None:
     """The provenance record of a graded .docx/.xlsx, or None."""
-    import json
-    import zipfile
     from lxml import etree
 
     try:
@@ -142,8 +142,6 @@ def read_meta(graded_file) -> dict | None:
 def mark_state(graded_file) -> dict:
     """Which pinned marks a graded .docx / .xlsx already carries (exact
     text): {"grading_completed": bool, "reviewed": bool}."""
-    from pathlib import Path
-
     path = Path(graded_file)
     if path.suffix.lower() == ".docx":
         import docx

@@ -9,7 +9,7 @@
 __pycache__/
 *.pyc
 
-# Shared extraction cache (deterministic, derived from data files — never commit)
+# Toolkit cache: extractions, answer keys, scratch (derived from data files — never commit)
 .cache/
 
 # Secrets

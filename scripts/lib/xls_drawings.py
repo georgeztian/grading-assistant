@@ -48,13 +48,9 @@ def detect_xls_drawings(path: Path) -> dict:
     obj_records = 0
     pos = 0
     n = len(data)
-    # Safety cap: a well-formed stream has far fewer records than its byte
-    # length; this just bounds worst-case iteration on a corrupt/garbage file.
-    max_iterations = n
-    iterations = 0
-
-    while pos + 4 <= n and iterations < max_iterations:
-        iterations += 1
+    # Every record advances pos by at least its 4-byte header, so even a
+    # corrupt stream ends the walk.
+    while pos + 4 <= n:
         rec_type = data[pos] | (data[pos + 1] << 8)
         rec_len = data[pos + 2] | (data[pos + 3] << 8)
         if rec_type == MSODRAWINGGROUP:

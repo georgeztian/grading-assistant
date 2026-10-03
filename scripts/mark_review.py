@@ -160,7 +160,6 @@ def check_state(state: dict) -> None:
 
 def mark_document(path: Path, passed: bool, items: list[dict], summary: str) -> None:
     document = docx.Document(str(path))
-    check_state(marks.mark_state_of_document(document))
     blue = RGBColor.from_string(marks.CHECKER_BLUE)
 
     def add(text: str, bold: bool = False) -> None:
@@ -177,7 +176,6 @@ def mark_document(path: Path, passed: bool, items: list[dict], summary: str) -> 
 
 
 def mark_workbook(path: Path, passed: bool, items: list[dict], summary: str) -> None:
-    check_state(marks.mark_state(path))
     wb = openpyxl.load_workbook(str(path))
     ws = wb[marks.SUMMARY_SHEET]
     blue = Font(color=marks.CHECKER_BLUE)
@@ -220,6 +218,10 @@ def main():
         for p in (args.graded_file, args.submission):
             if not p.exists():
                 raise ReviewError(f"file not found: {p}")
+        ext = args.graded_file.suffix.lower()
+        if ext not in (".docx", ".xlsx"):
+            raise ReviewError(f"expected a _Graded.docx or _Graded.xlsx, got {ext}")
+        check_state(marks.mark_state(args.graded_file))
         passed = args.result == "passed"
         if passed and args.discrepancies:
             raise ReviewError("'passed' takes no discrepancies file")
@@ -227,13 +229,7 @@ def main():
             raise ReviewError("'failed' needs the discrepancies JSON")
         items, summary = ([], "") if passed else load_discrepancies(args.discrepancies)
         check_audit(args.graded_file, args.submission, passed, items)
-        ext = args.graded_file.suffix.lower()
-        if ext == ".docx":
-            mark_document(args.graded_file, passed, items, summary)
-        elif ext == ".xlsx":
-            mark_workbook(args.graded_file, passed, items, summary)
-        else:
-            raise ReviewError(f"expected a _Graded.docx or _Graded.xlsx, got {ext}")
+        (mark_document if ext == ".docx" else mark_workbook)(args.graded_file, passed, items, summary)
     except ReviewError as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=False))
         sys.exit(1)

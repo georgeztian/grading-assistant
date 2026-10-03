@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Extract text from a PDF, flag pages whose text layer likely corrupted an
-equation, and flag pages containing embedded raster images, per the equation caveats in
-.claude/skills/grading-instructions/extraction-fallback.md.
+"""Extract text from a PDF and flag the pages to read from a rendered
+picture instead: a text layer that likely corrupted an equation, an
+embedded raster image, or a vector chart/diagram (per the caveats in
+.claude/skills/grading-instructions/extraction-fallback.md).
 
 Word-exported PDFs flatten equations to positioned glyphs with no math
 markup — plain text extraction commonly emits Unicode Mathematical
@@ -15,7 +16,8 @@ also checked for embedded raster images (a pasted screenshot of handwritten
 work, a scanned figure) via `page.get_images()`. A page can contain a real
 answer as an image with otherwise perfectly clean surrounding text, so this
 check does NOT depend on the text looking suspicious; any page with an
-embedded image is flagged and rendered too.
+embedded image is flagged and rendered too. So is a page holding a chart or
+diagram drawn as vectors (lib/pdf_docx.graphic_regions), which has no image.
 
 Normally used through extract.py (cached; it also rebuilds the PDF as the
 base .docx the graded copy is written from). Run standalone it just prints

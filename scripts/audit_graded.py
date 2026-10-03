@@ -60,7 +60,9 @@ import _venv  # noqa: F401  — must precede third-party imports (re-runs under 
 import docx
 import openpyxl
 from docx.text.paragraph import Paragraph
+from openpyxl.cell.cell import MergedCell
 from openpyxl.chartsheet import Chartsheet
+from openpyxl.utils.cell import get_column_letter
 from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -199,12 +201,15 @@ def audit_document(graded: Path, submission: Path) -> dict:
         report["problems"].append({"type": "format_error",
                                    "detail": f"table count changed {len(src_tables)} -> {len(g_tables)}"})
     for t, (st, gt) in enumerate(zip(src_tables, g_tables)):
+        # A merged cell repeats across the grid: audit each <w:tc> once. The
+        # set holds the elements themselves (not id()s, which lxml reuses
+        # once a proxy is freed and would silently skip unrelated cells).
         seen = set()
         for r, (srow, grow) in enumerate(zip(st.rows, gt.rows)):
             for c, (sc, gc) in enumerate(zip(srow.cells, grow.cells)):
-                if id(gc._tc) in seen:
+                if gc._tc in seen:
                     continue
-                seen.add(id(gc._tc))
+                seen.add(gc._tc)
                 audit_cell_paragraphs(sc, gc, f"t{t}:r{r}c{c}", report)
 
     inserted = report.pop("_inserted")
@@ -275,9 +280,6 @@ def _comparable(value):
 def audit_workbook(graded: Path, submission: Path, meta: dict | None = None) -> dict:
     """`meta`: the graded file's provenance record, which says how many
     annotations each answer cell got, so stacked explanations replay exactly."""
-    from openpyxl.cell.cell import MergedCell
-    from openpyxl.utils.cell import get_column_letter
-
     per_answer: dict[str, int] = {}
     for m in (meta or {}).get("annotations", []):
         if isinstance(m.get("anchor"), str):
@@ -553,14 +555,11 @@ def cell_rule_problems(annotations: list[dict], result: dict) -> list[dict]:
     return problems
 
 
-def compare(blind: dict, annotations: list[dict], meta: dict | None) -> list[dict]:
-    by_n = {a["n"]: a["question"] for a in (meta or {}).get("annotations", [])}
+def compare(blind: dict, annotations: list[dict]) -> list[dict]:
     grader: dict[str, set] = {}
     for a in annotations:
-        question = by_n.get(a.get("tag"))
-        a["question"] = question
-        if question:
-            grader.setdefault(question, set()).add((a["verdict_label"] or "?").lower())
+        if a["question"]:
+            grader.setdefault(a["question"], set()).add((a["verdict_label"] or "?").lower())
     out = []
     for question, mine in blind.items():
         labels = grader.get(question, set())
@@ -623,7 +622,10 @@ def main():
         report = (audit_document(args.graded_file, args.submission_file) if ext == ".docx"
                   else audit_workbook(args.graded_file, args.submission_file, meta))
         report["problems"] = prov + report["problems"]
+        # Each annotation's rubric question, from the tag annotate.py wrote.
+        question_of_tag = {m["n"]: m.get("question") for m in (meta or {}).get("annotations", [])}
         for a in report["annotations"]:
+            a["question"] = question_of_tag.get(a.get("tag"))
             if a.get("tag") is None:
                 report["problems"].append({"type": "format_error", "annotation": a["n"],
                                            "detail": "annotation has no question tag"})
@@ -633,14 +635,11 @@ def main():
                                            "detail": "annotation mentions the rubric, solution or "
                                                      f"answer key, which students cannot see: {mentioned}"})
         if cell_mode:
-            by_n = {m["n"]: m.get("question") for m in (meta or {}).get("annotations", [])}
-            for a in report["annotations"]:
-                a["question"] = by_n.get(a.get("tag"))
             report["problems"] += cell_rule_problems(
                 report["annotations"], compare_xlsx.grade_cells(args.submission_file, args.solutions))
             report["comparison"] = compare_cells(blind, report["annotations"])
         else:
-            report["comparison"] = compare(blind, report["annotations"], meta)
+            report["comparison"] = compare(blind, report["annotations"])
         report["blind_sha256"] = hashlib.sha256(args.blind.read_bytes()).hexdigest()
         report["graded_sha256"] = cache.sha256_of(args.graded_file)
     except (RuntimeError, ValueError, rubric.RubricError) as exc:
